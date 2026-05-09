@@ -36,21 +36,43 @@ interface Recurrente {
   monto: number;
   tipo: "ingreso" | "egreso";
   userId: string;
+  agrupadorId?: string;
+}
+
+interface Agrupador {
+  id: string;
+  nombre: string;
+  userId: string;
 }
 
 export default function DashboardPage() {
   const { user } = useAuth();
   const [recurrentes, setRecurrentes] = useState<Recurrente[]>([]);
-  const [nuevo, setNuevo] = useState({ nombre: "", monto: "", tipo: "egreso" as "ingreso" | "egreso" });
+  const [agrupadores, setAgrupadores] = useState<Agrupador[]>([]);
+  const [nuevo, setNuevo] = useState({ nombre: "", monto: "", tipo: "egreso" as "ingreso" | "egreso", agrupadorId: "" });
+  const [nuevoAgrupador, setNuevoAgrupador] = useState("");
   const [isAdding, setIsAdding] = useState(false);
+  const [isAddingAgrupador, setIsAddingAgrupador] = useState(false);
 
   useEffect(() => {
     if (!user) return;
-    const q = query(collection(db, "movimientos_recurrentes"), where("userId", "==", user.uid));
-    const unsub = onSnapshot(q, (snap) => {
+    
+    // Suscripción a movimientos recurrentes
+    const qRec = query(collection(db, "movimientos_recurrentes"), where("userId", "==", user.uid));
+    const unsubRec = onSnapshot(qRec, (snap) => {
       setRecurrentes(snap.docs.map(d => ({ id: d.id, ...d.data() })) as Recurrente[]);
     });
-    return () => unsub();
+
+    // Suscripción a agrupadores
+    const qAgr = query(collection(db, "agrupadores"), where("userId", "==", user.uid));
+    const unsubAgr = onSnapshot(qAgr, (snap) => {
+      setAgrupadores(snap.docs.map(d => ({ id: d.id, ...d.data() })) as Agrupador[]);
+    });
+
+    return () => {
+      unsubRec();
+      unsubAgr();
+    };
   }, [user]);
 
   const handleAdd = async (e: React.FormEvent) => {
@@ -62,9 +84,10 @@ export default function DashboardPage() {
         nombre: nuevo.nombre,
         monto: parseFloat(nuevo.monto),
         tipo: nuevo.tipo,
-        userId: user.uid
+        userId: user.uid,
+        agrupadorId: nuevo.agrupadorId || null
       });
-      setNuevo({ nombre: "", monto: "", tipo: "egreso" });
+      setNuevo({ nombre: "", monto: "", tipo: "egreso", agrupadorId: "" });
     } catch (err) {
       console.error(err);
     } finally {
@@ -74,6 +97,29 @@ export default function DashboardPage() {
 
   const handleDelete = async (id: string) => {
     await deleteDoc(doc(db, "movimientos_recurrentes", id));
+  };
+
+  const handleAddAgrupador = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !nuevoAgrupador.trim()) return;
+    setIsAddingAgrupador(true);
+    try {
+      await addDoc(collection(db, "agrupadores"), {
+        nombre: nuevoAgrupador.trim(),
+        userId: user.uid
+      });
+      setNuevoAgrupador("");
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsAddingAgrupador(false);
+    }
+  };
+
+  const handleDeleteAgrupador = async (id: string) => {
+    if (confirm("¿Estás seguro de eliminar este agrupador?")) {
+      await deleteDoc(doc(db, "agrupadores", id));
+    }
   };
 
   return (
@@ -139,6 +185,20 @@ export default function DashboardPage() {
                     required
                   />
                 </div>
+
+                {nuevo.tipo === "egreso" && agrupadores.length > 0 && (
+                  <select 
+                    className="w-full bg-slate-50 border-none rounded-2xl px-5 py-4 focus:ring-2 focus:ring-nu-purple transition-all font-bold text-slate-800 appearance-none"
+                    value={nuevo.agrupadorId}
+                    onChange={(e) => setNuevo({...nuevo, agrupadorId: e.target.value})}
+                  >
+                    <option value="">Sin Agrupador (Opcional)</option>
+                    {agrupadores.map(a => (
+                      <option key={a.id} value={a.id}>{a.nombre}</option>
+                    ))}
+                  </select>
+                )}
+
                 <button 
                   disabled={isAdding}
                   className="w-full bg-slate-900 text-white font-bold py-4 rounded-2xl flex items-center justify-center gap-2 active:scale-95 transition-all shadow-lg"
@@ -151,6 +211,45 @@ export default function DashboardPage() {
                   )}
                 </button>
               </form>
+            </section>
+
+            {/* Sección: Agrupadores (NUEVO) */}
+            <section className="bg-white border border-slate-100 p-6 rounded-[2.5rem] shadow-sm">
+              <h2 className="text-sm font-black uppercase tracking-widest text-slate-400 mb-6 ml-2">Agrupadores de Gasto</h2>
+              
+              <form onSubmit={handleAddAgrupador} className="flex gap-2 mb-6">
+                <input 
+                  type="text" 
+                  placeholder="Ej: Comida, Transporte..."
+                  className="flex-1 bg-slate-50 border-none rounded-2xl px-5 py-4 focus:ring-2 focus:ring-nu-purple transition-all font-bold text-slate-800"
+                  value={nuevoAgrupador}
+                  onChange={(e) => setNuevoAgrupador(e.target.value)}
+                  required
+                />
+                <button 
+                  disabled={isAddingAgrupador}
+                  className="bg-nu-purple text-white p-4 rounded-2xl flex items-center justify-center active:scale-95 transition-all shadow-lg"
+                >
+                  {isAddingAgrupador ? <Loader2 className="w-5 h-5 animate-spin" /> : <Plus className="w-5 h-5" />}
+                </button>
+              </form>
+
+              <div className="flex flex-wrap gap-2">
+                {agrupadores.map((a) => (
+                  <div key={a.id} className="bg-slate-50 border border-slate-100 px-4 py-2 rounded-xl flex items-center gap-3">
+                    <span className="text-sm font-bold text-slate-700">{a.nombre}</span>
+                    <button 
+                      onClick={() => handleDeleteAgrupador(a.id)}
+                      className="text-slate-300 hover:text-red-500 transition-colors"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+                {agrupadores.length === 0 && (
+                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest text-center w-full py-4">No hay agrupadores creados</p>
+                )}
+              </div>
             </section>
 
             {/* Sección: Lista de Recurrentes */}
@@ -172,7 +271,14 @@ export default function DashboardPage() {
                       </div>
                       <div>
                         <h4 className="font-bold text-slate-800 text-sm leading-none mb-1">{r.nombre}</h4>
-                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">Recurrente</p>
+                        <div className="flex items-center gap-2">
+                          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">Recurrente</p>
+                          {r.agrupadorId && (
+                            <span className="text-[8px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-md font-black uppercase">
+                              {agrupadores.find(a => a.id === r.agrupadorId)?.nombre || "Agrupado"}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
                     <div className="flex items-center gap-4">

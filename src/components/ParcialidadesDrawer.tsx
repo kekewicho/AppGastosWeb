@@ -5,7 +5,10 @@ import {
   collection, 
   writeBatch, 
   doc, 
-  Timestamp 
+  Timestamp,
+  query,
+  where,
+  onSnapshot
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/context/AuthContext";
@@ -25,6 +28,11 @@ interface ParcialidadesDrawerProps {
   currentRange: QuincenaRange;
 }
 
+interface Agrupador {
+  id: string;
+  nombre: string;
+}
+
 export default function ParcialidadesDrawer({ isOpen, onClose, currentRange }: ParcialidadesDrawerProps) {
   const { user } = useAuth();
   const [nombre, setNombre] = useState("");
@@ -32,7 +40,18 @@ export default function ParcialidadesDrawer({ isOpen, onClose, currentRange }: P
   const [montoTotal, setMontoTotal] = useState("");
   const [montoParcial, setMontoParcial] = useState("");
   const [numParcialidades, setNumParcialidades] = useState("12");
+  const [agrupadorId, setAgrupadorId] = useState("");
+  const [agrupadores, setAgrupadores] = useState<Agrupador[]>([]);
   const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    if (!user || !isOpen) return;
+    const q = query(collection(db, "agrupadores"), where("userId", "==", user.uid));
+    const unsub = onSnapshot(q, (snap) => {
+      setAgrupadores(snap.docs.map((d) => ({ id: d.id, ...d.data() })) as Agrupador[]);
+    });
+    return () => unsub();
+  }, [user, isOpen]);
 
   const calculatedParcial = inputMode === "total" && montoTotal && numParcialidades 
     ? (parseFloat(montoTotal) / parseInt(numParcialidades)).toFixed(2)
@@ -66,7 +85,8 @@ export default function ParcialidadesDrawer({ isOpen, onClose, currentRange }: P
           userId: user.uid,
           planId: planId,
           planIndex: index + 1,
-          planTotal: n
+          planTotal: n,
+          agrupadorId: agrupadorId || null
         });
       });
 
@@ -159,6 +179,22 @@ export default function ParcialidadesDrawer({ isOpen, onClose, currentRange }: P
                 />
               </div>
             </div>
+
+            {agrupadores.length > 0 && (
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-4">Agrupador (Opcional)</label>
+                <select 
+                  className="w-full bg-slate-50 border-2 border-transparent rounded-2xl px-6 py-4 focus:border-nu-purple focus:bg-white outline-none transition-all font-bold text-slate-800 appearance-none"
+                  value={agrupadorId}
+                  onChange={(e) => setAgrupadorId(e.target.value)}
+                >
+                  <option value="">Sin Agrupador</option>
+                  {agrupadores.map(a => (
+                    <option key={a.id} value={a.id}>{a.nombre}</option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             {/* Resumen Informativo */}
             <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex items-center justify-between">
