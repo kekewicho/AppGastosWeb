@@ -13,7 +13,8 @@ import {
   deleteDoc,
   doc,
   Timestamp,
-  where
+  where,
+  updateDoc
 } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
 import { useAuth } from "@/context/AuthContext";
@@ -29,7 +30,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Plus,
-  Zap
+  Zap,
+  FileText
 } from "lucide-react";
 import Link from "next/link";
 import { 
@@ -49,6 +51,13 @@ interface Movimiento {
   tipo: "ingreso" | "egreso";
   fecha: Timestamp;
   userId: string;
+  agrupadorId?: string;
+}
+
+interface Agrupador {
+  id: string;
+  nombre: string;
+  userId: string;
 }
 
 type NuevoMovimiento = Omit<Movimiento, "id" | "fecha" | "userId" | "monto"> & {
@@ -58,10 +67,13 @@ type NuevoMovimiento = Omit<Movimiento, "id" | "fecha" | "userId" | "monto"> & {
 export default function Home() {
   const { user, loading } = useAuth();
   const [movimientos, setMovimientos] = useState<Movimiento[]>([]);
-  const [nuevoMovimiento, setNuevoMovimiento] = useState<NuevoMovimiento>({ nombre: "", monto: "", tipo: "egreso" as const });
+  const [agrupadores, setAgrupadores] = useState<Agrupador[]>([]);
+  const [nuevoMovimiento, setNuevoMovimiento] = useState<NuevoMovimiento>({ nombre: "", monto: "", tipo: "egreso" as const, agrupadorId: "" });
   const [isAdding, setIsAdding] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isParcialidadesOpen, setIsParcialidadesOpen] = useState(false);
+  const [isReportOpen, setIsReportOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [isLoadingRecurrentes, setIsLoadingRecurrentes] = useState(false);
   
   // Estado para la quincena actual
@@ -84,28 +96,63 @@ export default function Home() {
       setMovimientos(data);
     });
 
-    return () => unsubscribe();
+    // Suscripción a agrupadores
+    const qAgr = query(collection(db, "agrupadores"), where("userId", "==", user.uid));
+    const unsubAgr = onSnapshot(qAgr, (snap) => {
+      setAgrupadores(snap.docs.map(d => ({ id: d.id, ...d.data() })) as Agrupador[]);
+    });
+
+    return () => {
+      unsubscribe();
+      unsubAgr();
+    };
   }, [user, currentRange]);
 
-  const handleAddMovimiento = async (e: React.FormEvent) => {
+  const handleSubmitMovimiento = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!nuevoMovimiento.nombre || !nuevoMovimiento.monto || !user) return;
     setIsAdding(true);
     try {
-      await addDoc(collection(db, "movimientos"), {
+      const movementData = {
         nombre: nuevoMovimiento.nombre,
         monto: parseFloat(nuevoMovimiento.monto),
         tipo: nuevoMovimiento.tipo,
-        fecha: Timestamp.now(),
-        userId: user.uid
-      });
-      setNuevoMovimiento({ nombre: "", monto: "", tipo: "egreso" });
+        userId: user.uid,
+        agrupadorId: nuevoMovimiento.agrupadorId || null
+      };
+
+      if (editingId) {
+        await updateDoc(doc(db, "movimientos", editingId), movementData);
+      } else {
+        await addDoc(collection(db, "movimientos"), {
+          ...movementData,
+          fecha: Timestamp.now(),
+        });
+      }
+      
+      resetForm();
       setIsDrawerOpen(false);
     } catch (error) {
-      console.error("Error al añadir movimiento", error);
+      console.error("Error al procesar movimiento", error);
     } finally {
       setIsAdding(false);
     }
+  };
+
+  const resetForm = () => {
+    setNuevoMovimiento({ nombre: "", monto: "", tipo: "egreso", agrupadorId: "" });
+    setEditingId(null);
+  };
+
+  const handleEditClick = (mov: Movimiento) => {
+    setNuevoMovimiento({
+      nombre: mov.nombre,
+      monto: mov.monto.toString(),
+      tipo: mov.tipo,
+      agrupadorId: mov.agrupadorId || ""
+    });
+    setEditingId(mov.id);
+    setIsDrawerOpen(true);
   };
 
   const handleDeleteMovimiento = async (mov: Movimiento) => {
@@ -158,7 +205,8 @@ export default function Home() {
           tipo: data.tipo,
           fecha: Timestamp.now(),
           userId: user.uid,
-          recurrente: true
+          recurrente: true,
+          agrupadorId: data.agrupadorId || null
         });
       });
       await batch.commit();
@@ -262,7 +310,10 @@ export default function Home() {
             <section className="flex justify-center items-center px-2">
               <div className="flex gap-8 pb-2">
                 <button 
-                  onClick={() => setIsDrawerOpen(true)}
+                  onClick={() => {
+                    resetForm();
+                    setIsDrawerOpen(true);
+                  }}
                   className="flex flex-col items-center gap-2 group"
                 >
                   <div className="w-14 h-14 bg-white border border-slate-100 rounded-2xl flex items-center justify-center shadow-sm group-active:scale-90 transition-transform text-nu-purple hover:border-nu-purple/20 transition-all">
@@ -294,14 +345,27 @@ export default function Home() {
                   </div>
                   <span className="text-[10px] font-bold text-slate-500">Fijos</span>
                 </button>
+
+                <button 
+                  onClick={() => setIsReportOpen(true)}
+                  className="flex flex-col items-center gap-2 group"
+                >
+                  <div className="w-14 h-14 bg-white border border-slate-100 rounded-2xl flex items-center justify-center shadow-sm group-active:scale-90 transition-transform text-nu-purple hover:border-nu-purple/20 transition-all">
+                    <FileText className="w-6 h-6" />
+                  </div>
+                  <span className="text-[10px] font-bold text-slate-500">Reporte</span>
+                </button>
               </div>
             </section>
 
             {/* Bottom Drawer para Nuevo Movimiento */}
             <BottomDrawer 
               isOpen={isDrawerOpen} 
-              onClose={() => setIsDrawerOpen(false)} 
-              title="Nuevo Movimiento"
+              onClose={() => {
+                setIsDrawerOpen(false);
+                resetForm();
+              }} 
+              title={editingId ? "Editar Movimiento" : "Nuevo Movimiento"}
             >
               <div className="space-y-8">
                 <div className="flex bg-slate-100 p-1.5 rounded-2xl">
@@ -319,7 +383,7 @@ export default function Home() {
                   </button>
                 </div>
 
-                <form onSubmit={handleAddMovimiento} className="space-y-6">
+                <form onSubmit={handleSubmitMovimiento} className="space-y-6">
                   <div className="space-y-2">
                     <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-4">Descripción</label>
                     <input 
@@ -348,14 +412,29 @@ export default function Home() {
                     </div>
                   </div>
 
+                  {nuevoMovimiento.tipo === "egreso" && agrupadores.length > 0 && (
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-4">Agrupador (Opcional)</label>
+                      <select 
+                        className="w-full bg-slate-50 border-2 border-transparent rounded-[1.5rem] px-6 py-5 focus:border-nu-purple focus:bg-white outline-none transition-all font-bold text-slate-800 text-lg appearance-none"
+                        value={nuevoMovimiento.agrupadorId}
+                        onChange={(e) => setNuevoMovimiento({...nuevoMovimiento, agrupadorId: e.target.value})}
+                      >
+                        <option value="">Sin Agrupador</option>
+                        {agrupadores.map(a => (
+                          <option key={a.id} value={a.id}>{a.nombre}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
                   <button 
                     disabled={isAdding}
                     className={`w-full text-white font-black py-5 rounded-[1.5rem] transition-all flex items-center justify-center gap-3 active:scale-95 shadow-xl text-lg ${nuevoMovimiento.tipo === "egreso" ? "bg-nu-purple shadow-nu-purple/30" : "bg-emerald-600 shadow-emerald-900/20"}`}
                   >
                     {isAdding ? <Loader2 className="w-6 h-6 animate-spin" /> : (
                       <>
-                        <Plus className="w-5 h-5" />
-                        Guardar Registro
+                        {editingId ? "Actualizar" : "Guardar"} Registro
                       </>
                     )}
                   </button>
@@ -369,6 +448,65 @@ export default function Home() {
               currentRange={currentRange}
             />
 
+            <BottomDrawer
+              isOpen={isReportOpen}
+              onClose={() => setIsReportOpen(false)}
+              title="Distribución de Gastos"
+            >
+              <div className="space-y-6">
+                <div className="bg-slate-50 p-6 rounded-[2rem] border border-slate-100">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 text-center">Total Egresos</p>
+                  <h3 className="text-3xl font-black text-slate-800 text-center">
+                    ${totalEgresos.toLocaleString('es-ES', { minimumFractionDigits: 2 })}
+                  </h3>
+                </div>
+
+                <div className="space-y-4">
+                  {/* Gastos Agrupados */}
+                  {Object.entries(
+                    movimientos
+                      .filter(m => m.tipo === "egreso" && m.agrupadorId)
+                      .reduce((acc, m) => {
+                        const name = agrupadores.find(a => a.id === m.agrupadorId)?.nombre || "Agrupado";
+                        acc[name] = (acc[name] || 0) + m.monto;
+                        return acc;
+                      }, {} as Record<string, number>)
+                  ).map(([nombre, monto]) => (
+                    <div key={nombre} className="flex items-center justify-between p-4 bg-white border border-slate-100 rounded-2xl">
+                      <div className="flex items-center gap-3">
+                        <div className="w-2 h-2 bg-nu-purple rounded-full" />
+                        <span className="font-bold text-slate-700">{nombre}</span>
+                      </div>
+                      <span className="font-black text-slate-900">${monto.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</span>
+                    </div>
+                  ))}
+
+                  {/* Gastos Individuales (Sin Agrupador) */}
+                  {movimientos
+                    .filter(m => m.tipo === "egreso" && !m.agrupadorId)
+                    .map((m) => (
+                      <div key={m.id} className="flex items-center justify-between p-4 bg-white border border-slate-100 rounded-2xl border-dashed">
+                        <span className="font-medium text-slate-500 text-sm italic">{m.nombre}</span>
+                        <span className="font-bold text-slate-600 text-sm">${m.monto.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</span>
+                      </div>
+                    ))}
+                  
+                  {movimientos.filter(m => m.tipo === "egreso").length === 0 && (
+                    <div className="py-8 text-center">
+                      <p className="text-slate-400 text-sm">No hay egresos en esta quincena</p>
+                    </div>
+                  )}
+                </div>
+
+                <button 
+                  onClick={() => setIsReportOpen(false)}
+                  className="w-full py-4 bg-slate-100 text-slate-600 font-bold rounded-2xl hover:bg-slate-200 transition-colors"
+                >
+                  Cerrar Reporte
+                </button>
+              </div>
+            </BottomDrawer>
+
             {/* Lista Mobile */}
             <section className="space-y-4 pb-32">
               <div className="flex items-center justify-between px-2">
@@ -379,7 +517,8 @@ export default function Home() {
                 {movimientos.map((m) => (
                   <div 
                     key={m.id}
-                    className="group bg-white border border-slate-50 p-5 rounded-2xl flex items-center justify-between shadow-sm active:bg-slate-50 transition-colors"
+                    onClick={() => handleEditClick(m)}
+                    className="group bg-white border border-slate-50 p-5 rounded-2xl flex items-center justify-between shadow-sm active:bg-slate-50 transition-colors cursor-pointer"
                   >
                     <div className="flex items-center gap-4">
                       <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${m.tipo === "ingreso" ? "bg-emerald-100 text-emerald-600" : "bg-nu-purple-light text-nu-purple"}`}>
@@ -394,6 +533,11 @@ export default function Home() {
                           {(m as any).planId && (
                             <span className="text-[9px] bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded-md font-black uppercase">Plan</span>
                           )}
+                          {m.agrupadorId && (
+                            <span className="text-[9px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-md font-black uppercase">
+                              {agrupadores.find(a => a.id === m.agrupadorId)?.nombre || "Agrupado"}
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -402,7 +546,10 @@ export default function Home() {
                         {m.tipo === "ingreso" ? "+" : "-"}${m.monto.toLocaleString('es-ES', { minimumFractionDigits: 2 })}
                       </span>
                       <button 
-                        onClick={() => handleDeleteMovimiento(m)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteMovimiento(m);
+                        }}
                         className="p-2 text-slate-200 hover:text-red-500 transition-all"
                       >
                         <Trash2 className="w-4 h-4" />
