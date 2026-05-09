@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "App Gastos - Firebase",
-  description: "Next.js project with Firebase Auth and Firestore",
+  title: "MyPocket - Control de Gastos",
+  description: "Gestiona tus finanzas con la simplicidad de MyPocket",
 };
 
 export default function RootLayout({
@@ -26,7 +26,7 @@ export default function RootLayout({
   return (
     <html lang="es" className="h-full">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-full bg-slate-950 text-white`}
+        className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-full bg-background text-foreground`}
       >
         <AuthProvider>
           {children}
