@@ -95,7 +95,7 @@ export default function Home() {
       await addDoc(collection(db, "movimientos"), {
         nombre: nuevoMovimiento.nombre,
         monto: parseFloat(nuevoMovimiento.monto),
-        tipo: "egreso", // Forzado a egreso en este flujo simplificado o según el botón
+        tipo: nuevoMovimiento.tipo,
         fecha: Timestamp.now(),
         userId: user.uid
       });
@@ -104,7 +104,6 @@ export default function Home() {
     } catch (error) {
       console.error("Error al añadir movimiento", error);
     } finally {
-      setIsAdding(true);
       setIsAdding(false);
     }
   };
