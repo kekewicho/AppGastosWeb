@@ -20,7 +20,7 @@ export default function BottomDrawer({ isOpen, onClose, title, children }: Botto
   if (!mounted) return null;
 
   return (
-    <>
+    <div className="h-full w-full">
       {/* Backdrop */}
       <div 
         className={`fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] transition-opacity duration-300 ${isOpen ? "opacity-100" : "opacity-0 pointer-events-none"}`}
@@ -59,6 +59,6 @@ export default function BottomDrawer({ isOpen, onClose, title, children }: Botto
           {children}
         </div>
       </div>
-    </>
+    </div>
   );
 }

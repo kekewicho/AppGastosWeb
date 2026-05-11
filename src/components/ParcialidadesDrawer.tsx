@@ -20,7 +20,7 @@ import {
   CalendarDays
 } from "lucide-react";
 import BottomDrawer from "@/components/BottomDrawer";
-import { QuincenaRange, getNextNQuincenas } from "@/lib/dateUtils";
+import { QuincenaRange, getNextNQuincenas, getQuincenaRange } from "@/lib/dateUtils";
 
 interface ParcialidadesDrawerProps {
   isOpen: boolean;
@@ -69,6 +69,11 @@ export default function ParcialidadesDrawer({ isOpen, onClose, currentRange }: P
     const n = parseInt(numParcialidades);
     if (isNaN(finalMontoParcial) || isNaN(n) || n <= 0) return;
 
+    const todayRange = getQuincenaRange(new Date());
+    const isCurrentQuincena =
+      currentRange.start.getTime() === todayRange.start.getTime() &&
+      currentRange.end.getTime() === todayRange.end.getTime();
+
     setIsSaving(true);
     try {
       const batch = writeBatch(db);
@@ -77,11 +82,18 @@ export default function ParcialidadesDrawer({ isOpen, onClose, currentRange }: P
 
       ranges.forEach((range, index) => {
         const docRef = doc(collection(db, "movimientos"));
+        
+        // Para la primera parcialidad, si es la quincena actual, usamos "ahora"
+        // Para las demás o si es quincena futura, usamos el inicio del rango
+        const fechaParcialidad = (index === 0 && isCurrentQuincena)
+          ? Timestamp.now()
+          : Timestamp.fromDate(range.start);
+
         batch.set(docRef, {
           nombre: `${nombre} (${index + 1}/${n})`,
           monto: finalMontoParcial,
           tipo: "egreso",
-          fecha: Timestamp.fromDate(range.start), // Usamos el inicio de la quincena como fecha del registro
+          fecha: fechaParcialidad,
           userId: user.uid,
           planId: planId,
           planIndex: index + 1,
@@ -91,7 +103,7 @@ export default function ParcialidadesDrawer({ isOpen, onClose, currentRange }: P
       });
 
       await batch.commit();
-      alert(`Plan de ${n} parcialidades creado con éxito`);
+      alert(`Plan de ${n} parcialidades creado con éxito en ${isCurrentQuincena ? "esta quincena" : currentRange.label}`);
       onClose();
       // Reset form
       setNombre("");
@@ -101,7 +113,6 @@ export default function ParcialidadesDrawer({ isOpen, onClose, currentRange }: P
       console.error(err);
       alert("Error al crear el plan de parcialidades");
     } finally {
-      setIsSaving(true); // Se queda en true hasta que cierre por el alert, pero onClose lo limpia
       setIsSaving(false);
     }
   };

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { 
   signOut 
 } from "firebase/auth";
@@ -31,7 +31,9 @@ import {
   ChevronRight,
   Plus,
   Zap,
-  FileText
+  FileText,
+  SlidersHorizontal,
+  X
 } from "lucide-react";
 import Link from "next/link";
 import { 
@@ -75,6 +77,12 @@ export default function Home() {
   const [isReportOpen, setIsReportOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isLoadingRecurrentes, setIsLoadingRecurrentes] = useState(false);
+
+  // Filtros locales
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [filterFechaDesde, setFilterFechaDesde] = useState("");
+  const [filterFechaHasta, setFilterFechaHasta] = useState("");
+  const [filterAgrupadorId, setFilterAgrupadorId] = useState("");
   
   // Estado para la quincena actual
   const [currentRange, setCurrentRange] = useState<QuincenaRange>(getQuincenaRange(new Date()));
@@ -121,12 +129,21 @@ export default function Home() {
         agrupadorId: nuevoMovimiento.agrupadorId || null
       };
 
+      const todayRange = getQuincenaRange(new Date());
+      const isCurrentQuincena =
+        currentRange.start.getTime() === todayRange.start.getTime() &&
+        currentRange.end.getTime() === todayRange.end.getTime();
+      
+      const fechaMovimiento = isCurrentQuincena 
+        ? Timestamp.now() 
+        : Timestamp.fromDate(currentRange.start);
+
       if (editingId) {
         await updateDoc(doc(db, "movimientos", editingId), movementData);
       } else {
         await addDoc(collection(db, "movimientos"), {
           ...movementData,
-          fecha: Timestamp.now(),
+          fecha: fechaMovimiento,
         });
       }
       
@@ -194,6 +211,18 @@ export default function Home() {
         alert("No tienes movimientos recurrentes configurados. Agrégalos en el Dashboard.");
         return;
       }
+
+      // Determinar la fecha a usar:
+      // Si el usuario está posicionado en la quincena actual → Timestamp.now()
+      // Si está en otra quincena (planeando con anticipación) → inicio del rango seleccionado
+      const todayRange = getQuincenaRange(new Date());
+      const isCurrentQuincena =
+        currentRange.start.getTime() === todayRange.start.getTime() &&
+        currentRange.end.getTime() === todayRange.end.getTime();
+      const fechaMovimiento = isCurrentQuincena
+        ? Timestamp.now()
+        : Timestamp.fromDate(currentRange.start);
+
       const { writeBatch: wb, doc: fsDoc, collection: fsColl } = await import("firebase/firestore");
       const batch = wb(db);
       snap.docs.forEach(recDoc => {
@@ -203,14 +232,14 @@ export default function Home() {
           nombre: data.nombre,
           monto: data.monto,
           tipo: data.tipo,
-          fecha: Timestamp.now(),
+          fecha: fechaMovimiento,
           userId: user.uid,
           recurrente: true,
           agrupadorId: data.agrupadorId || null
         });
       });
       await batch.commit();
-      alert(`✓ ${snap.size} movimientos recurrentes cargados en esta quincena`);
+      alert(`✓ ${snap.size} movimientos recurrentes cargados en ${isCurrentQuincena ? "esta quincena" : currentRange.label}`);
     } catch (err) {
       console.error(err);
       alert("Error al cargar los movimientos recurrentes");
@@ -222,6 +251,32 @@ export default function Home() {
   const totalIngresos = movimientos.filter(m => m.tipo === "ingreso").reduce((acc, m) => acc + m.monto, 0);
   const totalEgresos = movimientos.filter(m => m.tipo === "egreso").reduce((acc, m) => acc + m.monto, 0);
   const balance = totalIngresos - totalEgresos;
+
+  // Filtrado local sin refetch
+  const filteredMovimientos = useMemo(() => {
+    return movimientos.filter(m => {
+      if (filterFechaDesde) {
+        const desde = new Date(filterFechaDesde + "T00:00:00");
+        if (m.fecha.toDate() < desde) return false;
+      }
+      if (filterFechaHasta) {
+        const hasta = new Date(filterFechaHasta + "T23:59:59");
+        if (m.fecha.toDate() > hasta) return false;
+      }
+      if (filterAgrupadorId) {
+        if (m.agrupadorId !== filterAgrupadorId) return false;
+      }
+      return true;
+    });
+  }, [movimientos, filterFechaDesde, filterFechaHasta, filterAgrupadorId]);
+
+  const hasActiveFilters = filterFechaDesde || filterFechaHasta || filterAgrupadorId;
+
+  const clearFilters = () => {
+    setFilterFechaDesde("");
+    setFilterFechaHasta("");
+    setFilterAgrupadorId("");
+  };
 
   if (loading) {
     return (
@@ -509,12 +564,90 @@ export default function Home() {
 
             {/* Lista Mobile */}
             <section className="space-y-4 pb-32">
+              {/* Botón de filtros */}
               <div className="flex items-center justify-between px-2">
                 <h4 className="font-black text-slate-400 uppercase text-[10px] tracking-widest">Actividad de la Quincena</h4>
-                <Calendar className="w-4 h-4 text-nu-purple" />
+                <div className="flex items-center gap-2">
+                  {hasActiveFilters && (
+                    <button
+                      onClick={clearFilters}
+                      className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest text-red-400 bg-red-50 px-2 py-1 rounded-full"
+                    >
+                      <X className="w-3 h-3" />
+                      Limpiar
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setIsFilterOpen(true)}
+                    className={`p-1.5 rounded-xl transition-colors ${hasActiveFilters ? "bg-nu-purple text-white" : "bg-slate-100 text-slate-500"}`}
+                  >
+                    <SlidersHorizontal className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
+
+              {/* Bottom Drawer para Filtros */}
+              <BottomDrawer
+                isOpen={isFilterOpen}
+                onClose={() => setIsFilterOpen(false)}
+                title="Filtrar Movimientos"
+              >
+                <div className="space-y-8 pb-4">
+                  <div className="space-y-4">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Rango de Fechas</p>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-4">Desde</label>
+                        <input
+                          type="date"
+                          value={filterFechaDesde}
+                          onChange={e => setFilterFechaDesde(e.target.value)}
+                          className="w-full bg-slate-50 border-2 border-transparent rounded-2xl px-4 py-4 focus:border-nu-purple focus:bg-white outline-none transition-all font-bold text-slate-700 text-sm"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-4">Hasta</label>
+                        <input
+                          type="date"
+                          value={filterFechaHasta}
+                          onChange={e => setFilterFechaHasta(e.target.value)}
+                          className="w-full bg-slate-50 border-2 border-transparent rounded-2xl px-4 py-4 focus:border-nu-purple focus:bg-white outline-none transition-all font-bold text-slate-700 text-sm"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {agrupadores.length > 0 && (
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-4">Agrupador</label>
+                      <select
+                        value={filterAgrupadorId}
+                        onChange={e => setFilterAgrupadorId(e.target.value)}
+                        className="w-full bg-slate-50 border-2 border-transparent rounded-2xl px-6 py-5 focus:border-nu-purple focus:bg-white outline-none transition-all font-bold text-slate-800 text-lg appearance-none"
+                      >
+                        <option value="">Todos los agrupadores</option>
+                        {agrupadores.map(a => (
+                          <option key={a.id} value={a.id}>{a.nombre}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
+                    <p className="text-xs font-bold text-slate-400">
+                      {filteredMovimientos.length} resultados encontrados
+                    </p>
+                    <button
+                      onClick={() => setIsFilterOpen(false)}
+                      className="px-8 py-4 bg-nu-purple text-white font-black rounded-2xl shadow-lg shadow-nu-purple/20 active:scale-95 transition-transform"
+                    >
+                      Aplicar Filtros
+                    </button>
+                  </div>
+                </div>
+              </BottomDrawer>
               <div className="space-y-3">
-                {movimientos.map((m) => (
+                {filteredMovimientos.map((m) => (
                   <div 
                     key={m.id}
                     onClick={() => handleEditClick(m)}
@@ -557,9 +690,11 @@ export default function Home() {
                     </div>
                   </div>
                 ))}
-                {movimientos.length === 0 && (
+                {filteredMovimientos.length === 0 && (
                   <div className="py-12 text-center">
-                    <p className="text-slate-400 font-medium">No hay registros en este periodo</p>
+                    <p className="text-slate-400 font-medium">
+                      {hasActiveFilters ? "Sin resultados para los filtros aplicados" : "No hay registros en este periodo"}
+                    </p>
                   </div>
                 )}
               </div>
