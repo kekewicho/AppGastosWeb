@@ -39,9 +39,17 @@ export function getQuincenaRange(referenceDate: Date): QuincenaRange {
 }
 
 export function getNextQuincena(currentRange: QuincenaRange): QuincenaRange {
-  const nextDay = addDays(currentRange.end, 1);
-  return getQuincenaRange(nextDay);
+  const isFirstQuincena = currentRange.start.getDate() === 1;
+  if (isFirstQuincena) {
+    const dateInSecondHalf = new Date(currentRange.start.getFullYear(), currentRange.start.getMonth(), 16);
+    return getQuincenaRange(dateInSecondHalf);
+  } else {
+    const currentMonthStart = startOfMonth(currentRange.start);
+    const nextMonthStart = addMonths(currentMonthStart, 1);
+    return getQuincenaRange(nextMonthStart);
+  }
 }
+
 
 export function getPreviousQuincena(currentRange: QuincenaRange): QuincenaRange {
   const prevDay = subDays(currentRange.start, 1);
