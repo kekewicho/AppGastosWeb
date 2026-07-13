@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import BottomDrawer from "@/components/BottomDrawer";
 import { QuincenaRange, getNextNQuincenas, getQuincenaRange } from "@/lib/dateUtils";
+import { useUserConfig } from "@/hooks/useUserConfig";
 
 interface ParcialidadesDrawerProps {
   isOpen: boolean;
@@ -43,6 +44,9 @@ export default function ParcialidadesDrawer({ isOpen, onClose, currentRange }: P
   const [agrupadorId, setAgrupadorId] = useState("");
   const [agrupadores, setAgrupadores] = useState<Agrupador[]>([]);
   const [isSaving, setIsSaving] = useState(false);
+
+  const { config } = useUserConfig();
+  const [segmentoId, setSegmentoId] = useState("");
 
   useEffect(() => {
     if (!user || !isOpen) return;
@@ -98,7 +102,8 @@ export default function ParcialidadesDrawer({ isOpen, onClose, currentRange }: P
           planId: planId,
           planIndex: index + 1,
           planTotal: n,
-          agrupadorId: agrupadorId || null
+          agrupadorId: agrupadorId || null,
+          segmentoId: config.segmentsEnabled ? (segmentoId || null) : null
         });
       });
 
@@ -109,6 +114,7 @@ export default function ParcialidadesDrawer({ isOpen, onClose, currentRange }: P
       setNombre("");
       setMontoTotal("");
       setMontoParcial("");
+      setSegmentoId("");
     } catch (err) {
       console.error(err);
       alert("Error al crear el plan de parcialidades");
@@ -202,6 +208,22 @@ export default function ParcialidadesDrawer({ isOpen, onClose, currentRange }: P
                   <option value="">Sin Agrupador</option>
                   {agrupadores.map(a => (
                     <option key={a.id} value={a.id}>{a.nombre}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {config && config.segmentsEnabled && (
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-4">Segmento de Egreso</label>
+                <select 
+                  className="w-full bg-slate-50 border-2 border-transparent rounded-2xl px-6 py-4 focus:border-nu-purple focus:bg-white outline-none transition-all font-bold text-slate-800 appearance-none"
+                  value={segmentoId}
+                  onChange={(e) => setSegmentoId(e.target.value)}
+                >
+                  <option value="">Sin Clasificar (Libre)</option>
+                  {config.segments.map(s => (
+                    <option key={s.id} value={s.id}>{s.nombre} ({s.porcentaje}%)</option>
                   ))}
                 </select>
               </div>

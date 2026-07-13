@@ -33,7 +33,9 @@ import {
   Zap,
   FileText,
   SlidersHorizontal,
-  X
+  X,
+  Sparkles,
+  Brain
 } from "lucide-react";
 import Link from "next/link";
 import { 
@@ -45,6 +47,9 @@ import {
 import BottomDrawer from "@/components/BottomDrawer";
 import ParcialidadesDrawer from "@/components/ParcialidadesDrawer";
 import { CreditCard as CardIcon } from "lucide-react";
+import { useUserConfig } from "@/hooks/useUserConfig";
+import { useGeminiKey } from "@/hooks/useGeminiKey";
+import { suggestSegment } from "@/lib/gemini";
 
 interface Movimiento {
   id: string;
@@ -54,6 +59,7 @@ interface Movimiento {
   fecha: Timestamp;
   userId: string;
   agrupadorId?: string;
+  segmentoId?: string;
 }
 
 interface Agrupador {
@@ -70,13 +76,20 @@ export default function Home() {
   const { user, loading } = useAuth();
   const [movimientos, setMovimientos] = useState<Movimiento[]>([]);
   const [agrupadores, setAgrupadores] = useState<Agrupador[]>([]);
-  const [nuevoMovimiento, setNuevoMovimiento] = useState<NuevoMovimiento>({ nombre: "", monto: "", tipo: "egreso" as const, agrupadorId: "" });
+  const [nuevoMovimiento, setNuevoMovimiento] = useState<NuevoMovimiento>({ nombre: "", monto: "", tipo: "egreso" as const, agrupadorId: "", segmentoId: "" });
   const [isAdding, setIsAdding] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isParcialidadesOpen, setIsParcialidadesOpen] = useState(false);
   const [isReportOpen, setIsReportOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isLoadingRecurrentes, setIsLoadingRecurrentes] = useState(false);
+
+  // Configuración de segmentos y Gemini
+  const { config } = useUserConfig();
+  const { getKey } = useGeminiKey();
+  const [isClassifying, setIsClassifying] = useState(false);
+  const [showAiBadge, setShowAiBadge] = useState(false);
+  const [lastClassifiedName, setLastClassifiedName] = useState("");
 
   // Filtros locales
   const [isFilterOpen, setIsFilterOpen] = useState(false);
@@ -116,6 +129,34 @@ export default function Home() {
     };
   }, [user, currentRange]);
 
+  const handleDescriptionBlur = async () => {
+    // Si la descripción está vacía, no es egreso, o es igual a la última clasificada, salimos temprano
+    if (!config.segmentsEnabled || !nuevoMovimiento.nombre.trim() || nuevoMovimiento.nombre === lastClassifiedName || nuevoMovimiento.tipo !== "egreso") return;
+    const key = getKey();
+    if (!key) return;
+
+    setIsClassifying(true);
+    try {
+      const suggestedId = await suggestSegment(
+        nuevoMovimiento.nombre,
+        config.segments,
+        key
+      );
+      if (suggestedId) {
+        setNuevoMovimiento(prev => ({
+          ...prev,
+          segmentoId: suggestedId
+        }));
+        setLastClassifiedName(nuevoMovimiento.nombre);
+        setShowAiBadge(true);
+      }
+    } catch (err) {
+      console.error("Error al clasificar con Gemini:", err);
+    } finally {
+      setIsClassifying(false);
+    }
+  };
+
   const handleSubmitMovimiento = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!nuevoMovimiento.nombre || !nuevoMovimiento.monto || !user) return;
@@ -126,7 +167,8 @@ export default function Home() {
         monto: parseFloat(nuevoMovimiento.monto),
         tipo: nuevoMovimiento.tipo,
         userId: user.uid,
-        agrupadorId: nuevoMovimiento.agrupadorId || null
+        agrupadorId: nuevoMovimiento.agrupadorId || null,
+        segmentoId: config.segmentsEnabled && nuevoMovimiento.tipo === "egreso" ? (nuevoMovimiento.segmentoId || null) : null
       };
 
       const todayRange = getQuincenaRange(new Date());
@@ -157,8 +199,10 @@ export default function Home() {
   };
 
   const resetForm = () => {
-    setNuevoMovimiento({ nombre: "", monto: "", tipo: "egreso", agrupadorId: "" });
+    setNuevoMovimiento({ nombre: "", monto: "", tipo: "egreso", agrupadorId: "", segmentoId: "" });
     setEditingId(null);
+    setShowAiBadge(false);
+    setLastClassifiedName("");
   };
 
   const handleEditClick = (mov: Movimiento) => {
@@ -166,10 +210,13 @@ export default function Home() {
       nombre: mov.nombre,
       monto: mov.monto.toString(),
       tipo: mov.tipo,
-      agrupadorId: mov.agrupadorId || ""
+      agrupadorId: mov.agrupadorId || "",
+      segmentoId: mov.segmentoId || ""
     });
     setEditingId(mov.id);
     setIsDrawerOpen(true);
+    setShowAiBadge(false);
+    setLastClassifiedName(mov.nombre);
   };
 
   const handleDeleteMovimiento = async (mov: Movimiento) => {
@@ -251,6 +298,30 @@ export default function Home() {
   const totalIngresos = movimientos.filter(m => m.tipo === "ingreso").reduce((acc, m) => acc + m.monto, 0);
   const totalEgresos = movimientos.filter(m => m.tipo === "egreso").reduce((acc, m) => acc + m.monto, 0);
   const balance = totalIngresos - totalEgresos;
+
+  const segmentCalculations = useMemo(() => {
+    if (!config || !config.segmentsEnabled) return [];
+
+    const baseAmount = totalIngresos > 0 ? totalIngresos : totalEgresos;
+
+    return config.segments.map(s => {
+      const actualSpend = movimientos
+        .filter(m => m.tipo === "egreso" && m.segmentoId === s.id)
+        .reduce((sum, m) => sum + m.monto, 0);
+
+      const metaMonto = baseAmount * (s.porcentaje / 100);
+      const progressPercent = metaMonto > 0 ? (actualSpend / metaMonto) * 100 : 0;
+      const shareOfTotalSpend = totalEgresos > 0 ? (actualSpend / totalEgresos) * 100 : 0;
+
+      return {
+        ...s,
+        actualSpend,
+        metaMonto,
+        progressPercent,
+        shareOfTotalSpend
+      };
+    });
+  }, [movimientos, config, totalIngresos, totalEgresos]);
 
   // Filtrado local sin refetch
   const filteredMovimientos = useMemo(() => {
@@ -447,6 +518,7 @@ export default function Home() {
                       className="w-full bg-slate-50 border-2 border-transparent rounded-[1.5rem] px-6 py-5 focus:border-nu-purple focus:bg-white outline-none transition-all font-bold text-slate-800 text-lg"
                       value={nuevoMovimiento.nombre}
                       onChange={(e) => setNuevoMovimiento({...nuevoMovimiento, nombre: e.target.value})}
+                      onBlur={handleDescriptionBlur}
                       required
                     />
                   </div>
@@ -478,6 +550,40 @@ export default function Home() {
                         <option value="">Sin Agrupador</option>
                         {agrupadores.map(a => (
                           <option key={a.id} value={a.id}>{a.nombre}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {nuevoMovimiento.tipo === "egreso" && config && config.segmentsEnabled && (
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center ml-4 mr-2">
+                        <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                          Segmento de Egreso
+                        </label>
+                        {isClassifying && (
+                          <span className="text-[9px] font-bold text-nu-purple animate-pulse flex items-center gap-1">
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" /> Clasificando con IA...
+                          </span>
+                        )}
+                        {showAiBadge && (
+                          <span className="text-[9px] font-black uppercase tracking-widest text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full flex items-center gap-1 border border-emerald-100 animate-bounce">
+                            <Sparkles className="w-2.5 h-2.5" /> Sugerido por IA ✨
+                          </span>
+                        )}
+                      </div>
+                      <select 
+                        className="w-full bg-slate-50 border-2 border-transparent rounded-[1.5rem] px-6 py-5 focus:border-nu-purple focus:bg-white outline-none transition-all font-bold text-slate-800 text-lg appearance-none"
+                        value={nuevoMovimiento.segmentoId || ""}
+                        onChange={(e) => {
+                          setNuevoMovimiento({...nuevoMovimiento, segmentoId: e.target.value});
+                          setLastClassifiedName(nuevoMovimiento.nombre);
+                          setShowAiBadge(false);
+                        }}
+                      >
+                        <option value="">Sin Clasificar (Libre)</option>
+                        {config.segments.map(s => (
+                          <option key={s.id} value={s.id}>{s.nombre} ({s.porcentaje}%)</option>
                         ))}
                       </select>
                     </div>
@@ -552,6 +658,64 @@ export default function Home() {
                     </div>
                   )}
                 </div>
+
+                {/* Guía de Segmentos 50-30-20 */}
+                {config && config.segmentsEnabled && segmentCalculations.length > 0 && (
+                  <div className="space-y-4 pt-6 border-t border-slate-100">
+                    <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                      Metas por Segmento ({totalIngresos > 0 ? "Presupuesto Real vs Meta" : "Distribución de Gastos"})
+                    </h4>
+                    <div className="space-y-4">
+                      {segmentCalculations.map((calc) => {
+                        const isOverspent = calc.actualSpend > calc.metaMonto && totalIngresos > 0;
+                        return (
+                          <div key={calc.id} className="space-y-2 bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                            <div className="flex justify-between items-center text-xs font-bold text-slate-700">
+                              <div className="flex items-center gap-2">
+                                <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: calc.color }} />
+                                <span>{calc.nombre}</span>
+                                <span className="text-[9px] text-slate-400 font-medium">({calc.porcentaje}%)</span>
+                              </div>
+                              <span className="font-black text-slate-900">
+                                ${calc.actualSpend.toLocaleString('es-ES', { minimumFractionDigits: 2 })}
+                                {totalIngresos > 0 && (
+                                  <span className="text-[10px] text-slate-400 font-medium ml-1">
+                                    / ${calc.metaMonto.toLocaleString('es-ES', { minimumFractionDigits: 2 })}
+                                  </span>
+                                )}
+                              </span>
+                            </div>
+                            
+                            {/* Barra de progreso */}
+                            <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden relative">
+                              <div 
+                                className="h-full rounded-full transition-all duration-500"
+                                style={{ 
+                                  width: `${Math.min(totalIngresos > 0 ? calc.progressPercent : calc.shareOfTotalSpend, 100)}%`,
+                                  backgroundColor: isOverspent ? "#ef4444" : calc.color
+                                }}
+                              />
+                            </div>
+
+                            <div className="flex justify-between items-center text-[9px] font-bold">
+                              <span className={isOverspent ? "text-red-500 font-black" : "text-slate-400"}>
+                                {totalIngresos > 0 
+                                  ? `${calc.progressPercent.toFixed(0)}% del límite presupuestado`
+                                  : `${calc.shareOfTotalSpend.toFixed(0)}% del gasto total`
+                                }
+                              </span>
+                              {isOverspent && (
+                                <span className="text-red-500 font-black animate-pulse flex items-center gap-0.5">
+                                  ⚠️ Límite excedido
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
 
                 <button 
                   onClick={() => setIsReportOpen(false)}
@@ -669,6 +833,14 @@ export default function Home() {
                           {m.agrupadorId && (
                             <span className="text-[9px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-md font-black uppercase">
                               {agrupadores.find(a => a.id === m.agrupadorId)?.nombre || "Agrupado"}
+                            </span>
+                          )}
+                          {config && config.segmentsEnabled && m.segmentoId && (
+                            <span 
+                              className="text-[9px] px-1.5 py-0.5 rounded-md font-black uppercase text-white"
+                              style={{ backgroundColor: config.segments.find(s => s.id === m.segmentoId)?.color || "#820ad1" }}
+                            >
+                              {config.segments.find(s => s.id === m.segmentoId)?.nombre || "Segmento"}
                             </span>
                           )}
                         </div>

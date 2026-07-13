@@ -16,7 +16,11 @@ import {
   Trash2,
   Loader2,
   ArrowUpCircle,
-  ArrowDownCircle
+  ArrowDownCircle,
+  Brain,
+  Sparkles,
+  Check,
+  AlertCircle
 } from "lucide-react";
 import Link from "next/link";
 import { 
@@ -29,6 +33,8 @@ import {
   where 
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { useGeminiKey } from "@/hooks/useGeminiKey";
+import { useUserConfig, Segment } from "@/hooks/useUserConfig";
 
 interface Recurrente {
   id: string;
@@ -53,6 +59,79 @@ export default function DashboardPage() {
   const [nuevoAgrupador, setNuevoAgrupador] = useState("");
   const [isAdding, setIsAdding] = useState(false);
   const [isAddingAgrupador, setIsAddingAgrupador] = useState(false);
+
+  const { getKey, setKey, clearKey, hasKey } = useGeminiKey();
+  const { config, loading: loadingConfig, updateConfig } = useUserConfig();
+
+  const [geminiInput, setGeminiInput] = useState("");
+  const [segmentsEnabled, setSegmentsEnabled] = useState(false);
+  const [segments, setSegments] = useState<Segment[]>([]);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+  const [isSavingConfig, setIsSavingConfig] = useState(false);
+
+  useEffect(() => {
+    if (config) {
+      setSegmentsEnabled(config.segmentsEnabled);
+      setSegments(config.segments);
+    }
+  }, [config]);
+
+  useEffect(() => {
+    const key = getKey();
+    if (key) {
+      setGeminiInput(key);
+    }
+  }, [getKey]);
+
+  const handleSegmentChange = (index: number, field: keyof Segment, value: string | number) => {
+    setSegments((prev) => {
+      const updated = [...prev];
+      updated[index] = {
+        ...updated[index],
+        [field]: value
+      };
+      return updated;
+    });
+  };
+
+  const handleAddSegment = () => {
+    if (segments.length >= 5) return;
+    const newId = `custom_${Date.now()}`;
+    const colors = ["#820ad1", "#f59e0b", "#10b981", "#f43f5e", "#3b82f6"];
+    const color = colors[segments.length % colors.length];
+    setSegments((prev) => [
+      ...prev,
+      { id: newId, nombre: `Nuevo Segmento`, porcentaje: 0, color }
+    ]);
+  };
+
+  const handleRemoveSegment = (index: number) => {
+    if (segments.length <= 2) return;
+    setSegments((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
+  const sumOfPercentages = segments.reduce((sum, s) => sum + s.porcentaje, 0);
+
+  const handleSaveConfig = async () => {
+    if (sumOfPercentages !== 100 && segmentsEnabled) {
+      alert("La suma de los porcentajes debe ser exactamente 100%.");
+      return;
+    }
+    setIsSavingConfig(true);
+    try {
+      await updateConfig({
+        segmentsEnabled,
+        segments
+      });
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3000);
+    } catch (err) {
+      console.error(err);
+      alert("Hubo un error al guardar la configuración.");
+    } finally {
+      setIsSavingConfig(false);
+    }
+  };
 
   useEffect(() => {
     if (!user) return;
@@ -249,6 +328,194 @@ export default function DashboardPage() {
                 {agrupadores.length === 0 && (
                   <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest text-center w-full py-4">No hay agrupadores creados</p>
                 )}
+              </div>
+            </section>
+
+            {/* Sección: Inteligencia Artificial y Segmentación */}
+            <section className="bg-white border border-slate-100 p-6 rounded-[2.5rem] shadow-sm space-y-8">
+              <div>
+                <h2 className="text-sm font-black uppercase tracking-widest text-slate-400 mb-2 ml-2 flex items-center gap-2">
+                  <Brain className="w-4 h-4 text-nu-purple" />
+                  Inteligencia Artificial
+                </h2>
+                <p className="text-xs text-slate-500 font-medium ml-2">Configura tu API Key de Gemini para clasificar tus gastos automáticamente.</p>
+              </div>
+
+              <div className="space-y-4">
+                <div className="space-y-3">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-4">Gemini API Key</label>
+                  <input 
+                    type="password" 
+                    placeholder={hasKey ? "••••••••••••••••••••••••" : "Ingresa tu API Key de Gemini"}
+                    className="w-full bg-slate-50 border-2 border-transparent rounded-2xl px-5 py-4 focus:border-nu-purple focus:bg-white outline-none transition-all font-bold text-slate-800 text-sm"
+                    value={geminiInput}
+                    onChange={(e) => setGeminiInput(e.target.value)}
+                  />
+                  {(geminiInput.trim() || hasKey) && (
+                    <div className="flex gap-2 justify-end pt-1">
+                      {geminiInput.trim() && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setKey(geminiInput);
+                            alert("¡API Key guardada localmente con éxito!");
+                          }}
+                          className="flex-1 bg-nu-purple text-white py-3.5 px-5 rounded-2xl font-bold active:scale-95 transition-transform text-xs shadow-md"
+                        >
+                          Guardar Llave
+                        </button>
+                      )}
+                      {hasKey && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            clearKey();
+                            setGeminiInput("");
+                            alert("API Key de Gemini eliminada.");
+                          }}
+                          className="flex-1 bg-red-50 text-red-500 border border-red-100 py-3.5 px-5 rounded-2xl font-bold active:scale-95 transition-transform text-xs"
+                        >
+                          Eliminar Llave
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  <p className="text-[10px] text-slate-400 ml-4 flex items-center gap-1 font-medium pt-1">
+                    <Sparkles className="w-3 text-nu-purple" />
+                    Tu clave se guarda localmente en tu navegador de forma segura.
+                  </p>
+                </div>
+              </div>
+
+              <div className="border-t border-slate-100 pt-6">
+                <div className="flex items-center justify-between mb-6">
+                  <div>
+                    <h2 className="text-sm font-black uppercase tracking-widest text-slate-400 flex items-center gap-2">
+                      <PieChart className="w-4 h-4 text-nu-purple" />
+                      Guía de Segmentos (50-30-20)
+                    </h2>
+                    <p className="text-xs text-slate-500 font-medium mt-1">Establece límites ideales para tus gastos quincenales.</p>
+                  </div>
+                  <button
+                    onClick={() => setSegmentsEnabled(!segmentsEnabled)}
+                    className={`w-14 h-8 rounded-full transition-all relative flex items-center ${segmentsEnabled ? "bg-nu-purple" : "bg-slate-200"}`}
+                  >
+                    <div className={`w-6 h-6 rounded-full bg-white shadow-md absolute transition-all ${segmentsEnabled ? "left-7" : "left-1"}`} />
+                  </button>
+                </div>
+
+                {segmentsEnabled && (
+                  <div className="space-y-6">
+                    <div className="space-y-4">
+                      {segments.map((seg, idx) => (
+                        <div key={seg.id || idx} className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-3">
+                          <div className="flex gap-3">
+                            <div className="flex-1 space-y-1">
+                              <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 ml-2">Nombre del Segmento</label>
+                              <input
+                                type="text"
+                                value={seg.nombre}
+                                onChange={(e) => handleSegmentChange(idx, "nombre", e.target.value)}
+                                className="w-full bg-white border-2 border-transparent rounded-xl px-3 py-2.5 focus:border-nu-purple outline-none transition-all font-bold text-slate-800 text-sm"
+                                placeholder="Ej: Necesidades"
+                              />
+                            </div>
+                            <div className="w-24 space-y-1">
+                              <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 ml-2">Meta (%)</label>
+                              <div className="relative">
+                                <input
+                                  type="number"
+                                  value={seg.porcentaje}
+                                  onChange={(e) => handleSegmentChange(idx, "porcentaje", parseInt(e.target.value) || 0)}
+                                  className="w-full bg-white border-2 border-transparent rounded-xl pl-3 pr-7 py-2.5 focus:border-nu-purple outline-none transition-all font-black text-slate-800 text-sm"
+                                  placeholder="50"
+                                />
+                                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-xs">%</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 ml-2">Descripción y Ejemplos (Ayuda a la IA)</label>
+                            <input
+                              type="text"
+                              value={seg.descripcion || ""}
+                              onChange={(e) => handleSegmentChange(idx, "descripcion", e.target.value)}
+                              className="w-full bg-white border-2 border-transparent rounded-xl px-3 py-2.5 focus:border-nu-purple outline-none transition-all font-medium text-slate-600 text-xs"
+                              placeholder="Ej: Renta, comida básica, servicios, transporte..."
+                            />
+                          </div>
+
+                          <div className="flex items-center justify-between pt-1">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 ml-2">Color:</span>
+                              <div className="flex gap-1">
+                                {["#820ad1", "#f59e0b", "#10b981", "#f43f5e", "#3b82f6"].map((color) => (
+                                  <button
+                                    key={color}
+                                    type="button"
+                                    onClick={() => handleSegmentChange(idx, "color", color)}
+                                    className={`w-5 h-5 rounded-full border transition-all ${seg.color === color ? "border-slate-900 scale-110 shadow-sm" : "border-transparent opacity-60"}`}
+                                    style={{ backgroundColor: color }}
+                                  />
+                                ))}
+                              </div>
+                            </div>
+                            {segments.length > 2 && (
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveSegment(idx)}
+                                className="text-xs text-red-500 font-bold hover:underline"
+                              >
+                                Eliminar
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {segments.length < 5 && (
+                      <button
+                        type="button"
+                        onClick={handleAddSegment}
+                        className="w-full border-2 border-dashed border-slate-200 text-slate-500 font-bold py-3.5 rounded-2xl text-xs active:scale-95 transition-transform flex items-center justify-center gap-2"
+                      >
+                        <Plus className="w-4 h-4" />
+                        Añadir Nuevo Segmento
+                      </button>
+                    )}
+
+                    <div className="flex items-center justify-between bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                      <div>
+                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Total Porcentajes</span>
+                        <p className={`text-base font-black ${sumOfPercentages === 100 ? "text-emerald-600" : "text-amber-600"}`}>
+                          {sumOfPercentages}% / 100%
+                        </p>
+                      </div>
+                      {sumOfPercentages !== 100 && (
+                        <p className="text-[9px] font-bold text-amber-600 max-w-[200px] text-right">
+                          La suma de los porcentajes debe ser exactamente 100% para poder guardar.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <div className="mt-6 flex flex-col gap-2">
+                  <button
+                    onClick={handleSaveConfig}
+                    disabled={isSavingConfig || (segmentsEnabled && sumOfPercentages !== 100)}
+                    className="w-full bg-nu-purple text-white font-black py-4 rounded-2xl active:scale-95 transition-all shadow-lg flex items-center justify-center gap-2 disabled:opacity-50 disabled:active:scale-100"
+                  >
+                    {isSavingConfig ? <Loader2 className="w-5 h-5 animate-spin" /> : (
+                      <>
+                        {saveSuccess ? <Check className="w-4 h-4" /> : null}
+                        {saveSuccess ? "¡Configuración Guardada!" : "Guardar Segmentos"}
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
             </section>
 
