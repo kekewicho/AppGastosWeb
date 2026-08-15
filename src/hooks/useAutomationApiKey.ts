@@ -4,7 +4,6 @@ import { db } from "@/lib/firebase";
 import { useAuth } from "@/context/AuthContext";
 
 export interface AutomationApiKeyMeta {
-  hash: string;
   preview: string;
   createdAt?: unknown;
 }
@@ -24,8 +23,10 @@ export interface AutomationApiKeyMeta {
  * - En Firestore únicamente se guarda un hash HMAC-SHA256 de la clave (en
  *   `api_key_lookup/{hash}`, con un secreto que solo conoce el servidor), que
  *   sirve para validar el header `x-api-key` sin poder reconstruir la clave original.
- * - En `user_configs/{uid}` solo se guarda metadata no sensible (hash, preview
- *   de 4 caracteres y fecha) para que la UI sepa que existe una clave activa.
+ * - El hash se referencia desde `automation_keys/{uid}`, una colección que
+ *   solo el servidor puede leer/escribir (nunca expuesta al cliente).
+ * - En `user_configs/{uid}` solo se guarda metadata no sensible (preview de 4
+ *   caracteres y fecha) para que la UI sepa que existe una clave activa.
  * - Al regenerar o revocar, el documento anterior en `api_key_lookup` se
  *   elimina para invalidar la clave vieja.
  */

@@ -11,6 +11,11 @@ import { generateApiKey, hashApiKey } from "@/lib/apiKeys";
  * de Firebase Auth del usuario. El servidor verifica el token con Firebase
  * Admin SDK para resolver el uid de forma confiable, evitando que el cliente
  * pueda generar/revocar claves a nombre de otro usuario.
+ *
+ * Nota de diseño: el hash de la clave nunca se guarda en `user_configs/{uid}`
+ * (que el cliente sí puede leer), sino en `automation_keys/{uid}` (accesible
+ * solo desde el servidor vía Admin SDK). Así el cliente solo puede ver la
+ * metadata no sensible (`preview`, `createdAt`) necesaria para la UI.
  */
 async function getAuthenticatedUid(request: Request): Promise<string | null> {
   const authHeader = request.headers.get("authorization") || request.headers.get("Authorization");
@@ -36,33 +41,43 @@ export async function POST(request: Request) {
   try {
     const db = getAdminDb();
     const userConfigRef = db.collection("user_configs").doc(uid);
-    const userConfigSnap = await userConfigRef.get();
-    const previousHash = userConfigSnap.data()?.apiKeyMeta?.hash as string | undefined;
-
-    // Invalida cualquier clave anterior antes de crear una nueva.
-    if (previousHash) {
-      await db.collection("api_key_lookup").doc(previousHash).delete();
-    }
-
+    const automationKeyRef = db.collection("automation_keys").doc(uid);
     const { rawKey, preview } = generateApiKey();
     const hash = hashApiKey(rawKey);
 
-    await db.collection("api_key_lookup").doc(hash).set({
-      userId: uid,
-      revoked: false,
-      createdAt: FieldValue.serverTimestamp(),
-    });
+    // Se ejecuta en una transacción para evitar condiciones de carrera si el
+    // usuario dispara dos generaciones concurrentes (p. ej. doble clic).
+    await db.runTransaction(async (tx) => {
+      const automationKeySnap = await tx.get(automationKeyRef);
+      const previousHash = automationKeySnap.data()?.hash as string | undefined;
 
-    await userConfigRef.set(
-      {
-        apiKeyMeta: {
-          hash,
-          preview,
-          createdAt: FieldValue.serverTimestamp(),
+      // Invalida cualquier clave anterior antes de crear una nueva.
+      if (previousHash) {
+        tx.delete(db.collection("api_key_lookup").doc(previousHash));
+      }
+
+      tx.set(db.collection("api_key_lookup").doc(hash), {
+        userId: uid,
+        revoked: false,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+
+      tx.set(automationKeyRef, {
+        hash,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+
+      tx.set(
+        userConfigRef,
+        {
+          apiKeyMeta: {
+            preview,
+            createdAt: FieldValue.serverTimestamp(),
+          },
         },
-      },
-      { merge: true }
-    );
+        { merge: true }
+      );
+    });
 
     return NextResponse.json({ success: true, apiKey: rawKey, preview });
   } catch (error) {
@@ -80,14 +95,19 @@ export async function DELETE(request: Request) {
   try {
     const db = getAdminDb();
     const userConfigRef = db.collection("user_configs").doc(uid);
-    const userConfigSnap = await userConfigRef.get();
-    const previousHash = userConfigSnap.data()?.apiKeyMeta?.hash as string | undefined;
+    const automationKeyRef = db.collection("automation_keys").doc(uid);
 
-    if (previousHash) {
-      await db.collection("api_key_lookup").doc(previousHash).delete();
-    }
+    await db.runTransaction(async (tx) => {
+      const automationKeySnap = await tx.get(automationKeyRef);
+      const previousHash = automationKeySnap.data()?.hash as string | undefined;
 
-    await userConfigRef.set({ apiKeyMeta: FieldValue.delete() }, { merge: true });
+      if (previousHash) {
+        tx.delete(db.collection("api_key_lookup").doc(previousHash));
+      }
+
+      tx.delete(automationKeyRef);
+      tx.set(userConfigRef, { apiKeyMeta: FieldValue.delete() }, { merge: true });
+    });
 
     return NextResponse.json({ success: true });
   } catch (error) {

@@ -48,15 +48,17 @@ Buenas prácticas de almacenamiento aplicadas:
   secreto que solo conoce el servidor), en la colección `api_key_lookup/{hash}`
   (`{ userId, revoked, createdAt, lastUsedAt }`), usada para resolver al dueño
   de la clave sin poder reconstruirla ni precalcular hashes fuera de línea.
+- Ese hash se referencia desde `automation_keys/{uid}`, una colección
+  accesible únicamente por el servidor (Admin SDK), nunca por el cliente.
 - En `user_configs/{uid}.apiKeyMeta` solo se guarda metadata no sensible
-  (`hash`, `preview` de 4 caracteres y `createdAt`) para poder mostrar el
-  estado de la clave en la UI.
+  (`preview` de 4 caracteres y `createdAt`) para poder mostrar el estado de la
+  clave en la UI, sin exponer el hash al cliente.
 - Al regenerar o revocar, el documento anterior en `api_key_lookup` se elimina,
   invalidando inmediatamente la clave anterior.
 
 Reglas de seguridad recomendadas para Firestore (tanto `/api/webhook` como
 `/api/automation-key` usan Firebase Admin SDK, por lo que el cliente no
-necesita ningún permiso sobre `api_key_lookup`):
+necesita ningún permiso sobre `api_key_lookup` ni `automation_keys`):
 
 ```
 match /user_configs/{userId} {
@@ -67,6 +69,11 @@ match /user_configs/{userId} {
 }
 
 match /api_key_lookup/{hash} {
+  // Solo el backend (Firebase Admin SDK) accede a esta colección.
+  allow read, write: if false;
+}
+
+match /automation_keys/{userId} {
   // Solo el backend (Firebase Admin SDK) accede a esta colección.
   allow read, write: if false;
 }

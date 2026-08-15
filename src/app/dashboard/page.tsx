@@ -186,6 +186,7 @@ export default function DashboardPage() {
       setTimeout(() => setApiKeyCopied(false), 2000);
     } catch (err) {
       console.error(err);
+      alert("No se pudo copiar la API Key automáticamente. Selecciónala y cópiala manualmente.");
     }
   };
 
