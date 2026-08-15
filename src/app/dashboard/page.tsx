@@ -20,7 +20,10 @@ import {
   Brain,
   Sparkles,
   Check,
-  AlertCircle
+  AlertCircle,
+  KeyRound,
+  Copy,
+  RefreshCw
 } from "lucide-react";
 import Link from "next/link";
 import { 
@@ -34,6 +37,7 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useGeminiKey } from "@/hooks/useGeminiKey";
+import { useAutomationApiKey } from "@/hooks/useAutomationApiKey";
 import { useUserConfig, Segment } from "@/hooks/useUserConfig";
 
 interface Recurrente {
@@ -62,12 +66,21 @@ export default function DashboardPage() {
 
   const { getKey, setKey, clearKey, hasKey } = useGeminiKey();
   const { config, loading: loadingConfig, updateConfig } = useUserConfig();
+  const {
+    hasKey: hasApiKey,
+    preview: apiKeyPreview,
+    generateKey: generateApiKey,
+    revokeKey: revokeApiKey,
+  } = useAutomationApiKey();
 
   const [geminiInput, setGeminiInput] = useState("");
   const [segmentsEnabled, setSegmentsEnabled] = useState(false);
   const [segments, setSegments] = useState<Segment[]>([]);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [isSavingConfig, setIsSavingConfig] = useState(false);
+  const [isGeneratingApiKey, setIsGeneratingApiKey] = useState(false);
+  const [generatedApiKey, setGeneratedApiKey] = useState<string | null>(null);
+  const [apiKeyCopied, setApiKeyCopied] = useState(false);
 
   useEffect(() => {
     if (config) {
@@ -130,6 +143,50 @@ export default function DashboardPage() {
       alert("Hubo un error al guardar la configuración.");
     } finally {
       setIsSavingConfig(false);
+    }
+  };
+
+  const handleGenerateApiKey = async () => {
+    if (hasApiKey) {
+      const confirmRegen = confirm(
+        "Ya tienes una API Key activa. Generar una nueva invalidará la anterior y las automatizaciones que la usen dejarán de funcionar. ¿Deseas continuar?"
+      );
+      if (!confirmRegen) return;
+    }
+    setIsGeneratingApiKey(true);
+    try {
+      const newKey = await generateApiKey();
+      setGeneratedApiKey(newKey);
+      setApiKeyCopied(false);
+    } catch (err) {
+      console.error(err);
+      alert("Hubo un error al generar la API Key.");
+    } finally {
+      setIsGeneratingApiKey(false);
+    }
+  };
+
+  const handleRevokeApiKey = async () => {
+    if (!confirm("¿Estás seguro de revocar tu API Key? Las automatizaciones conectadas dejarán de funcionar.")) return;
+    try {
+      await revokeApiKey();
+      setGeneratedApiKey(null);
+      setApiKeyCopied(false);
+    } catch (err) {
+      console.error(err);
+      alert("Hubo un error al revocar la API Key.");
+    }
+  };
+
+  const handleCopyApiKey = async () => {
+    if (!generatedApiKey) return;
+    try {
+      await navigator.clipboard.writeText(generatedApiKey);
+      setApiKeyCopied(true);
+      setTimeout(() => setApiKeyCopied(false), 2000);
+    } catch (err) {
+      console.error(err);
+      alert("No se pudo copiar la API Key automáticamente. Selecciónala y cópiala manualmente.");
     }
   };
 
@@ -517,6 +574,88 @@ export default function DashboardPage() {
                   </button>
                 </div>
               </div>
+            </section>
+
+            {/* Sección: Automatizaciones (API Key personal) */}
+            <section className="bg-white border border-slate-100 p-6 rounded-[2.5rem] shadow-sm space-y-6">
+              <div>
+                <h2 className="text-sm font-black uppercase tracking-widest text-slate-400 mb-2 ml-2 flex items-center gap-2">
+                  <KeyRound className="w-4 h-4 text-nu-purple" />
+                  Automatizaciones
+                </h2>
+                <p className="text-xs text-slate-500 font-medium ml-2">
+                  Genera una API Key personal para conectar automatizaciones de terceros (Zapier, Make, atajos, scripts propios, etc.)
+                  y registrar gastos automáticamente en tu cuenta.
+                </p>
+              </div>
+
+              {generatedApiKey ? (
+                <div className="space-y-3">
+                  <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex gap-2 items-start">
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    <p className="text-[11px] font-bold text-amber-700">
+                      Copia y guarda esta clave ahora. Por seguridad, no volveremos a mostrarla completa.
+                    </p>
+                  </div>
+                  <div className="bg-slate-50 border-2 border-nu-purple rounded-2xl px-5 py-4 flex items-center justify-between gap-2">
+                    <code className="text-xs font-bold text-slate-800 break-all">{generatedApiKey}</code>
+                    <button
+                      type="button"
+                      onClick={handleCopyApiKey}
+                      className="shrink-0 bg-nu-purple text-white p-2.5 rounded-xl active:scale-95 transition-transform"
+                    >
+                      {apiKeyCopied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-slate-400 ml-4 font-medium">
+                    Envíala en el header <code className="font-bold">x-api-key</code> al endpoint <code className="font-bold">/api/webhook</code>.
+                  </p>
+                </div>
+              ) : (
+                <div className="bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-bold text-slate-700">
+                      {hasApiKey ? "Tienes una API Key activa" : "No tienes ninguna API Key generada"}
+                    </p>
+                    {hasApiKey && apiKeyPreview && (
+                      <p className="text-[10px] text-slate-400 font-medium mt-1">
+                        Termina en •••• {apiKeyPreview}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleGenerateApiKey}
+                  disabled={isGeneratingApiKey}
+                  className="flex-1 bg-nu-purple text-white py-3.5 px-5 rounded-2xl font-bold active:scale-95 transition-transform text-xs shadow-md flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {isGeneratingApiKey ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : hasApiKey ? (
+                    <RefreshCw className="w-4 h-4" />
+                  ) : (
+                    <KeyRound className="w-4 h-4" />
+                  )}
+                  {hasApiKey ? "Regenerar Llave" : "Generar Llave"}
+                </button>
+                {hasApiKey && (
+                  <button
+                    type="button"
+                    onClick={handleRevokeApiKey}
+                    className="flex-1 bg-red-50 text-red-500 border border-red-100 py-3.5 px-5 rounded-2xl font-bold active:scale-95 transition-transform text-xs"
+                  >
+                    Revocar Llave
+                  </button>
+                )}
+              </div>
+              <p className="text-[10px] text-slate-400 ml-4 flex items-center gap-1 font-medium">
+                <Sparkles className="w-3 text-nu-purple" />
+                Solo almacenamos un hash de tu clave; nunca guardamos el valor original.
+              </p>
             </section>
 
             {/* Sección: Lista de Recurrentes */}

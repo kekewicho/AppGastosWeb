@@ -29,6 +29,67 @@ To learn more about Next.js, take a look at the following resources:
 
 You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
 
+## Automatizaciones (API Key personal)
+
+Desde `Configuración` → `Automatizaciones` cada usuario puede generar una API Key
+personal para conectar automatizaciones de terceros (Zapier, Make, atajos,
+scripts propios, etc.) y registrar gastos vía `POST /api/webhook` enviando el
+header `x-api-key`.
+
+Buenas prácticas de almacenamiento aplicadas:
+
+- La clave en texto plano **nunca** se guarda, solo se devuelve una vez en la
+  respuesta del endpoint `/api/automation-key` al generarla.
+- La generación y revocación se realizan exclusivamente en el servidor
+  (`/api/automation-key`), autenticado con el ID Token de Firebase Auth del
+  usuario (verificado con Firebase Admin SDK). El cliente nunca escribe
+  directamente las colecciones sensibles de Firestore.
+- En Firestore solo se persiste un hash HMAC-SHA256 de la clave (con un
+  secreto que solo conoce el servidor), en la colección `api_key_lookup/{hash}`
+  (`{ userId, revoked, createdAt, lastUsedAt }`), usada para resolver al dueño
+  de la clave sin poder reconstruirla ni precalcular hashes fuera de línea.
+- Ese hash se referencia desde `automation_keys/{uid}`, una colección
+  accesible únicamente por el servidor (Admin SDK), nunca por el cliente.
+- En `user_configs/{uid}.apiKeyMeta` solo se guarda metadata no sensible
+  (`preview` de 4 caracteres y `createdAt`) para poder mostrar el estado de la
+  clave en la UI, sin exponer el hash al cliente.
+- Al regenerar o revocar, el documento anterior en `api_key_lookup` se elimina,
+  invalidando inmediatamente la clave anterior.
+
+Reglas de seguridad recomendadas para Firestore (tanto `/api/webhook` como
+`/api/automation-key` usan Firebase Admin SDK, por lo que el cliente no
+necesita ningún permiso sobre `api_key_lookup` ni `automation_keys`):
+
+```
+match /user_configs/{userId} {
+  allow read: if request.auth != null && request.auth.uid == userId;
+  // Las escrituras del campo apiKeyMeta las hace el servidor con Admin SDK;
+  // el cliente solo necesita poder editar el resto de su configuración.
+  allow write: if request.auth != null && request.auth.uid == userId;
+}
+
+match /api_key_lookup/{hash} {
+  // Solo el backend (Firebase Admin SDK) accede a esta colección.
+  allow read, write: if false;
+}
+
+match /automation_keys/{userId} {
+  // Solo el backend (Firebase Admin SDK) accede a esta colección.
+  allow read, write: if false;
+}
+```
+
+Variables de entorno necesarias (credenciales de una cuenta de servicio de
+Firebase y un secreto propio, **sin** el prefijo `NEXT_PUBLIC_` para que nunca
+se envíen al navegador):
+
+```
+FIREBASE_PROJECT_ID=...
+FIREBASE_CLIENT_EMAIL=...
+FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+API_KEY_HASH_SECRET=una-cadena-aleatoria-larga-y-secreta
+```
+
 ## Deploy on Vercel
 
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
