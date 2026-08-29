@@ -3,6 +3,7 @@
 import ProtectedRoute from "@/components/ProtectedRoute";
 import { useAuth } from "@/context/AuthContext";
 import { useState, useEffect } from "react";
+import Navbar from "@/components/Navbar";
 import { 
   ArrowLeft,
   CreditCard,
@@ -716,6 +717,7 @@ export default function DashboardPage() {
             </div>
 
           </div>
+          <Navbar />
         </div>
       </main>
     </ProtectedRoute>

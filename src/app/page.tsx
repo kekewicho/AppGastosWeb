@@ -46,7 +46,8 @@ import {
 } from "@/lib/dateUtils";
 import BottomDrawer from "@/components/BottomDrawer";
 import ParcialidadesDrawer from "@/components/ParcialidadesDrawer";
-import { CreditCard as CardIcon } from "lucide-react";
+import Navbar from "@/components/Navbar";
+import { CreditCard as CardIcon, PiggyBank, HandCoins } from "lucide-react";
 import { useUserConfig } from "@/hooks/useUserConfig";
 import { useGeminiKey } from "@/hooks/useGeminiKey";
 import { suggestSegment } from "@/lib/gemini";
@@ -60,12 +61,20 @@ interface Movimiento {
   userId: string;
   agrupadorId?: string;
   segmentoId?: string;
+  prestamoId?: string;
 }
 
 interface Agrupador {
   id: string;
   nombre: string;
   userId: string;
+}
+
+interface PrestamoSimple {
+  id: string;
+  deudor: string;
+  montoOriginal: number;
+  montoPagado: number;
 }
 
 type NuevoMovimiento = Omit<Movimiento, "id" | "fecha" | "userId" | "monto"> & {
@@ -76,7 +85,8 @@ export default function Home() {
   const { user, loading } = useAuth();
   const [movimientos, setMovimientos] = useState<Movimiento[]>([]);
   const [agrupadores, setAgrupadores] = useState<Agrupador[]>([]);
-  const [nuevoMovimiento, setNuevoMovimiento] = useState<NuevoMovimiento>({ nombre: "", monto: "", tipo: "egreso" as const, agrupadorId: "", segmentoId: "" });
+  const [prestamosActivos, setPrestamosActivos] = useState<PrestamoSimple[]>([]);
+  const [nuevoMovimiento, setNuevoMovimiento] = useState<NuevoMovimiento>({ nombre: "", monto: "", tipo: "egreso" as const, agrupadorId: "", segmentoId: "", prestamoId: "" });
   const [isAdding, setIsAdding] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isParcialidadesOpen, setIsParcialidadesOpen] = useState(false);
@@ -123,9 +133,20 @@ export default function Home() {
       setAgrupadores(snap.docs.map(d => ({ id: d.id, ...d.data() })) as Agrupador[]);
     });
 
+    // Suscripción a préstamos pendientes/parciales
+    const qPrest = query(collection(db, "prestamos"), where("userId", "==", user.uid));
+    const unsubPrest = onSnapshot(qPrest, (snap) => {
+      const data = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }) as any)
+        .filter(p => p.estado !== "pagado")
+        .map(p => ({ id: p.id, deudor: p.deudor, montoOriginal: p.montoOriginal, montoPagado: p.montoPagado }));
+      setPrestamosActivos(data);
+    });
+
     return () => {
       unsubscribe();
       unsubAgr();
+      unsubPrest();
     };
   }, [user, currentRange]);
 
@@ -162,13 +183,15 @@ export default function Home() {
     if (!nuevoMovimiento.nombre || !nuevoMovimiento.monto || !user) return;
     setIsAdding(true);
     try {
+      const montoNum = parseFloat(nuevoMovimiento.monto);
       const movementData = {
         nombre: nuevoMovimiento.nombre,
-        monto: parseFloat(nuevoMovimiento.monto),
+        monto: montoNum,
         tipo: nuevoMovimiento.tipo,
         userId: user.uid,
         agrupadorId: nuevoMovimiento.agrupadorId || null,
-        segmentoId: config.segmentsEnabled && nuevoMovimiento.tipo === "egreso" ? (nuevoMovimiento.segmentoId || null) : null
+        segmentoId: config.segmentsEnabled && nuevoMovimiento.tipo === "egreso" ? (nuevoMovimiento.segmentoId || null) : null,
+        prestamoId: nuevoMovimiento.tipo === "ingreso" && nuevoMovimiento.prestamoId ? nuevoMovimiento.prestamoId : null
       };
 
       const todayRange = getQuincenaRange(new Date());
@@ -183,10 +206,32 @@ export default function Home() {
       if (editingId) {
         await updateDoc(doc(db, "movimientos", editingId), movementData);
       } else {
-        await addDoc(collection(db, "movimientos"), {
+        const movRef = await addDoc(collection(db, "movimientos"), {
           ...movementData,
           fecha: fechaMovimiento,
         });
+
+        // Si se vinculó a un préstamo al crear un ingreso
+        if (nuevoMovimiento.tipo === "ingreso" && nuevoMovimiento.prestamoId) {
+          const targetPrestamo = prestamosActivos.find(p => p.id === nuevoMovimiento.prestamoId);
+          if (targetPrestamo) {
+            await addDoc(collection(db, "prestamo_pagos"), {
+              userId: user.uid,
+              prestamoId: targetPrestamo.id,
+              monto: montoNum,
+              fecha: fechaMovimiento,
+              nota: `Abono desde ingreso quincenal: ${nuevoMovimiento.nombre}`,
+              movimientoId: movRef.id
+            });
+
+            const nuevoMontoPagado = targetPrestamo.montoPagado + montoNum;
+            const nuevoEstado = nuevoMontoPagado >= targetPrestamo.montoOriginal ? "pagado" : "parcial";
+            await updateDoc(doc(db, "prestamos", targetPrestamo.id), {
+              montoPagado: nuevoMontoPagado,
+              estado: nuevoEstado
+            });
+          }
+        }
       }
       
       resetForm();
@@ -199,7 +244,7 @@ export default function Home() {
   };
 
   const resetForm = () => {
-    setNuevoMovimiento({ nombre: "", monto: "", tipo: "egreso", agrupadorId: "", segmentoId: "" });
+    setNuevoMovimiento({ nombre: "", monto: "", tipo: "egreso", agrupadorId: "", segmentoId: "", prestamoId: "" });
     setEditingId(null);
     setShowAiBadge(false);
     setLastClassifiedName("");
@@ -211,7 +256,8 @@ export default function Home() {
       monto: mov.monto.toString(),
       tipo: mov.tipo,
       agrupadorId: mov.agrupadorId || "",
-      segmentoId: mov.segmentoId || ""
+      segmentoId: mov.segmentoId || "",
+      prestamoId: mov.prestamoId || ""
     });
     setEditingId(mov.id);
     setIsDrawerOpen(true);
@@ -555,6 +601,22 @@ export default function Home() {
                     </div>
                   )}
 
+                  {nuevoMovimiento.tipo === "ingreso" && prestamosActivos.length > 0 && (
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-4">Vincular a Préstamo (Opcional)</label>
+                      <select 
+                        className="w-full bg-slate-50 border-2 border-transparent rounded-[1.5rem] px-6 py-5 focus:border-nu-purple focus:bg-white outline-none transition-all font-bold text-slate-800 text-lg appearance-none"
+                        value={nuevoMovimiento.prestamoId || ""}
+                        onChange={(e) => setNuevoMovimiento({...nuevoMovimiento, prestamoId: e.target.value})}
+                      >
+                        <option value="">Sin Vincular a Préstamo</option>
+                        {prestamosActivos.map(p => (
+                          <option key={p.id} value={p.id}>Abonar a: {p.deudor} (Pend: ${(p.montoOriginal - p.montoPagado).toLocaleString()})</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
                   {nuevoMovimiento.tipo === "egreso" && config && config.segmentsEnabled && (
                     <div className="space-y-2">
                       <div className="flex justify-between items-center ml-4 mr-2">
@@ -873,6 +935,7 @@ export default function Home() {
             </section>
           </div>
         )}
+        <Navbar />
       </div>
     </main>
   );
