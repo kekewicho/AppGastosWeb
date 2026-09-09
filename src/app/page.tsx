@@ -14,7 +14,8 @@ import {
   doc,
   Timestamp,
   where,
-  updateDoc
+  updateDoc,
+  writeBatch
 } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
 import { useAuth } from "@/context/AuthContext";
@@ -35,13 +36,18 @@ import {
   SlidersHorizontal,
   X,
   Sparkles,
-  Brain
+  Brain,
+  CheckSquare,
+  Check,
+  CalendarDays,
+  MoveRight
 } from "lucide-react";
 import Link from "next/link";
 import { 
   getQuincenaRange, 
   getNextQuincena, 
   getPreviousQuincena,
+  getNextNQuincenas,
   QuincenaRange 
 } from "@/lib/dateUtils";
 import BottomDrawer from "@/components/BottomDrawer";
@@ -106,6 +112,12 @@ export default function Home() {
   const [filterFechaDesde, setFilterFechaDesde] = useState("");
   const [filterFechaHasta, setFilterFechaHasta] = useState("");
   const [filterAgrupadorId, setFilterAgrupadorId] = useState("");
+
+  // Selección múltiple y acciones por lote
+  const [isSelectingMode, setIsSelectingMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isMoveDrawerOpen, setIsMoveDrawerOpen] = useState(false);
+  const [isProcessingBulk, setIsProcessingBulk] = useState(false);
   
   // Estado para la quincena actual
   const [currentRange, setCurrentRange] = useState<QuincenaRange>(getQuincenaRange(new Date()));
@@ -290,9 +302,91 @@ export default function Home() {
     }
   };
 
-  const navNext = () => setCurrentRange(getNextQuincena(currentRange));
-  const navPrev = () => setCurrentRange(getPreviousQuincena(currentRange));
-  const navToday = () => setCurrentRange(getQuincenaRange(new Date()));
+  const navNext = () => {
+    setSelectedIds(new Set());
+    setCurrentRange(getNextQuincena(currentRange));
+  };
+  const navPrev = () => {
+    setSelectedIds(new Set());
+    setCurrentRange(getPreviousQuincena(currentRange));
+  };
+  const navToday = () => {
+    setSelectedIds(new Set());
+    setCurrentRange(getQuincenaRange(new Date()));
+  };
+
+  const toggleSelectMode = () => {
+    if (isSelectingMode) {
+      setSelectedIds(new Set());
+    }
+    setIsSelectingMode(!isSelectingMode);
+  };
+
+  const toggleSelectItem = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === filteredMovimientos.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filteredMovimientos.map(m => m.id)));
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0 || !user) return;
+    if (!confirm(`¿Estás seguro de eliminar los ${selectedIds.size} movimientos seleccionados?`)) return;
+
+    setIsProcessingBulk(true);
+    try {
+      const batch = writeBatch(db);
+      selectedIds.forEach(id => {
+        batch.delete(doc(db, "movimientos", id));
+      });
+      await batch.commit();
+      setSelectedIds(new Set());
+      setIsSelectingMode(false);
+    } catch (err) {
+      console.error("Error al eliminar movimientos en lote", err);
+      alert("Hubo un error al eliminar los movimientos.");
+    } finally {
+      setIsProcessingBulk(false);
+    }
+  };
+
+  const handleBulkMoveQuincena = async (targetRange: QuincenaRange) => {
+    if (selectedIds.size === 0 || !user) return;
+    setIsProcessingBulk(true);
+    try {
+      const batch = writeBatch(db);
+      const targetTimestamp = Timestamp.fromDate(targetRange.start);
+      selectedIds.forEach(id => {
+        batch.update(doc(db, "movimientos", id), {
+          fecha: targetTimestamp
+        });
+      });
+      await batch.commit();
+      const count = selectedIds.size;
+      setSelectedIds(new Set());
+      setIsSelectingMode(false);
+      setIsMoveDrawerOpen(false);
+      alert(`✓ ${count} ${count === 1 ? "movimiento movido" : "movimientos movidos"} a ${targetRange.label}`);
+    } catch (err) {
+      console.error("Error al mover movimientos de quincena", err);
+      alert("Hubo un error al mover los movimientos.");
+    } finally {
+      setIsProcessingBulk(false);
+    }
+  };
 
   const handleCargarRecurrentes = async () => {
     if (!user) return;
@@ -790,10 +884,21 @@ export default function Home() {
 
             {/* Lista Mobile */}
             <section className="space-y-4 pb-32">
-              {/* Botón de filtros */}
+              {/* Botón de filtros y selección múltiple */}
               <div className="flex items-center justify-between px-2">
                 <h4 className="font-black text-slate-400 uppercase text-[10px] tracking-widest">Actividad de la Quincena</h4>
                 <div className="flex items-center gap-2">
+                  <button
+                    onClick={toggleSelectMode}
+                    className={`px-3 py-1.5 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all active:scale-95 ${
+                      isSelectingMode 
+                        ? "bg-nu-purple text-white shadow-md shadow-nu-purple/20" 
+                        : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                    }`}
+                  >
+                    <CheckSquare className="w-3.5 h-3.5" />
+                    {isSelectingMode ? "Cancelar" : "Seleccionar"}
+                  </button>
                   {hasActiveFilters && (
                     <button
                       onClick={clearFilters}
@@ -811,6 +916,24 @@ export default function Home() {
                   </button>
                 </div>
               </div>
+
+              {/* Sub-bar para Selección Múltiple */}
+              {isSelectingMode && (
+                <div className="flex items-center justify-between bg-purple-50/80 border border-purple-100 p-3 rounded-2xl">
+                  <button
+                    onClick={toggleSelectAll}
+                    className="text-xs font-black text-nu-purple flex items-center gap-2 active:scale-95 transition-transform"
+                  >
+                    <div className={`w-4.5 h-4.5 rounded border flex items-center justify-center transition-all ${selectedIds.size === filteredMovimientos.length && filteredMovimientos.length > 0 ? "bg-nu-purple border-nu-purple text-white" : "border-slate-300 bg-white"}`}>
+                      {selectedIds.size === filteredMovimientos.length && filteredMovimientos.length > 0 && <Check className="w-3 h-3 stroke-[3]" />}
+                    </div>
+                    {selectedIds.size === filteredMovimientos.length && filteredMovimientos.length > 0 ? "Desmarcar todos" : "Seleccionar todos"}
+                  </button>
+                  <span className="text-xs font-bold text-slate-500">
+                    {selectedIds.size} de {filteredMovimientos.length} seleccionados
+                  </span>
+                </div>
+              )}
 
               {/* Bottom Drawer para Filtros */}
               <BottomDrawer
@@ -876,10 +999,29 @@ export default function Home() {
                 {filteredMovimientos.map((m) => (
                   <div 
                     key={m.id}
-                    onClick={() => handleEditClick(m)}
-                    className="group bg-white border border-slate-50 p-5 rounded-2xl flex items-center justify-between shadow-sm active:bg-slate-50 transition-colors cursor-pointer"
+                    onClick={() => {
+                      if (isSelectingMode) {
+                        toggleSelectItem(m.id);
+                      } else {
+                        handleEditClick(m);
+                      }
+                    }}
+                    className={`group border p-5 rounded-2xl flex items-center justify-between shadow-sm active:bg-slate-50 transition-all cursor-pointer ${
+                      isSelectingMode && selectedIds.has(m.id)
+                        ? "bg-purple-50/60 border-nu-purple/40 ring-1 ring-nu-purple/30"
+                        : "bg-white border-slate-50"
+                    }`}
                   >
                     <div className="flex items-center gap-4">
+                      {isSelectingMode && (
+                        <div className={`w-5 h-5 rounded-lg border-2 transition-all flex items-center justify-center shrink-0 ${
+                          selectedIds.has(m.id) 
+                            ? "bg-nu-purple border-nu-purple text-white shadow-sm" 
+                            : "border-slate-300 bg-white"
+                        }`}>
+                          {selectedIds.has(m.id) && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                        </div>
+                      )}
                       <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${m.tipo === "ingreso" ? "bg-emerald-100 text-emerald-600" : "bg-nu-purple-light text-nu-purple"}`}>
                         {m.tipo === "ingreso" ? <ArrowUpCircle className="w-5 h-5" /> : <ArrowDownCircle className="w-5 h-5" />}
                       </div>
@@ -935,6 +1077,127 @@ export default function Home() {
             </section>
           </div>
         )}
+
+        {/* Floating Action Bar para Selección Múltiple */}
+        {isSelectingMode && selectedIds.size > 0 && (
+          <div className="fixed bottom-20 left-1/2 -translate-x-1/2 w-[calc(100%-3rem)] max-w-[450px] z-[95] bg-slate-900 text-white p-4 rounded-3xl shadow-2xl flex items-center justify-between gap-2 animate-in fade-in slide-in-from-bottom-5">
+            <div className="flex items-center gap-2 pl-2">
+              <span className="bg-nu-purple text-white text-xs font-black px-2.5 py-1 rounded-full">
+                {selectedIds.size}
+              </span>
+              <span className="text-xs font-bold text-slate-300 hidden sm:inline">seleccionados</span>
+            </div>
+            
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setIsMoveDrawerOpen(true)}
+                disabled={isProcessingBulk}
+                className="bg-slate-800 hover:bg-slate-700 text-white px-3.5 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95 border border-slate-700"
+              >
+                <CalendarDays className="w-4 h-4 text-nu-purple" />
+                Mover
+              </button>
+
+              <button
+                onClick={handleBulkDelete}
+                disabled={isProcessingBulk}
+                className="bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30 px-3.5 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95"
+              >
+                {isProcessingBulk ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                Eliminar
+              </button>
+
+              <button
+                onClick={() => setSelectedIds(new Set())}
+                className="p-2 text-slate-400 hover:text-white transition-colors"
+                title="Limpiar selección"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Drawer para Mover de Quincena */}
+        <BottomDrawer
+          isOpen={isMoveDrawerOpen}
+          onClose={() => setIsMoveDrawerOpen(false)}
+          title="Mover Movimientos de Quincena"
+        >
+          <div className="space-y-6">
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+              <p className="text-xs text-slate-500 font-medium">
+                Seleccionaste <strong className="text-slate-800 font-bold">{selectedIds.size} movimiento(s)</strong>. Elige a qué quincena deseas moverlos:
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              {/* Opción 1: Siguiente quincena */}
+              <button
+                onClick={() => handleBulkMoveQuincena(getNextQuincena(currentRange))}
+                disabled={isProcessingBulk}
+                className="w-full bg-white border-2 border-slate-100 hover:border-nu-purple p-4 rounded-2xl flex items-center justify-between text-left transition-all group active:scale-98"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="p-3 bg-nu-purple-light text-nu-purple rounded-xl group-hover:bg-nu-purple group-hover:text-white transition-colors">
+                    <ChevronRight className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Siguiente Quincena</span>
+                    <h4 className="font-bold text-slate-800 text-sm capitalize">{getNextQuincena(currentRange).label}</h4>
+                  </div>
+                </div>
+                <MoveRight className="w-5 h-5 text-slate-300 group-hover:text-nu-purple transition-colors" />
+              </button>
+
+              {/* Opción 2: Quincena anterior */}
+              <button
+                onClick={() => handleBulkMoveQuincena(getPreviousQuincena(currentRange))}
+                disabled={isProcessingBulk}
+                className="w-full bg-white border-2 border-slate-100 hover:border-nu-purple p-4 rounded-2xl flex items-center justify-between text-left transition-all group active:scale-98"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="p-3 bg-slate-100 text-slate-600 rounded-xl group-hover:bg-nu-purple group-hover:text-white transition-colors">
+                    <ChevronLeft className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Quincena Anterior</span>
+                    <h4 className="font-bold text-slate-800 text-sm capitalize">{getPreviousQuincena(currentRange).label}</h4>
+                  </div>
+                </div>
+                <MoveRight className="w-5 h-5 text-slate-300 group-hover:text-nu-purple transition-colors" />
+              </button>
+
+              {/* Opción 3: Próximas quincenas */}
+              <div className="pt-2">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2 mb-2 block">
+                  Otras Quincenas Futuras
+                </label>
+                <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                  {getNextNQuincenas(currentRange, 6).slice(2).map((qRange, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => handleBulkMoveQuincena(qRange)}
+                      disabled={isProcessingBulk}
+                      className="w-full bg-slate-50 hover:bg-white border border-slate-100 hover:border-nu-purple p-3.5 rounded-xl flex items-center justify-between text-left transition-all text-xs font-bold text-slate-700 capitalize"
+                    >
+                      <span>{qRange.label}</span>
+                      <span className="text-[10px] text-nu-purple font-bold">Mover aquí →</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setIsMoveDrawerOpen(false)}
+              className="w-full py-4 bg-slate-100 text-slate-600 font-bold rounded-2xl hover:bg-slate-200 transition-colors"
+            >
+              Cancelar
+            </button>
+          </div>
+        </BottomDrawer>
+
         <Navbar />
       </div>
     </main>
