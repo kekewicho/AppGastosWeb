@@ -18,7 +18,8 @@ import { hashApiKey } from "@/lib/apiKeys";
  * {
  *   "nombre": "Descripción del gasto",
  *   "monto": 123.45,
- *   "tipo": "ingreso" | "egreso"
+ *   "tipo": "ingreso" | "egreso",
+ *   "agrupador": "Nombre o ID del agrupador" (opcional)
  * }
  *
  * Nota de seguridad: el usuario NO se envía en el payload. Se resuelve en el
@@ -69,24 +70,61 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "El campo 'monto' debe ser numérico" }, { status: 400 });
     }
 
-    // 3. Insertar en Firestore.
+    // 3. Resolver agrupador (opcional).
+    const rawAgrupadorInput = body.agrupadorId ?? body.agrupador ?? body.agrupador_nombre ?? body.agrupadorNombre;
+    let agrupadorId: string | null = null;
+
+    if (typeof rawAgrupadorInput === "string" && rawAgrupadorInput.trim().length > 0) {
+      const targetAgrupador = rawAgrupadorInput.trim();
+
+      // a) Verificar si coincide directamente con el ID de un agrupador del usuario
+      const directDocSnap = await db.collection("agrupadores").doc(targetAgrupador).get();
+      if (directDocSnap.exists && directDocSnap.data()?.userId === userId) {
+        agrupadorId = directDocSnap.id;
+      } else {
+        // b) Buscar por nombre (insensible a mayúsculas/minúsculas)
+        const agrupadoresSnap = await db.collection("agrupadores")
+          .where("userId", "==", userId)
+          .get();
+
+        const matchDoc = agrupadoresSnap.docs.find((d) => {
+          const nombreAgr = d.data().nombre;
+          return typeof nombreAgr === "string" && nombreAgr.trim().toLowerCase() === targetAgrupador.toLowerCase();
+        });
+
+        if (matchDoc) {
+          agrupadorId = matchDoc.id;
+        } else {
+          // c) Si no existe por ID ni por nombre, crearlo automáticamente para el usuario
+          const newAgrRef = await db.collection("agrupadores").add({
+            nombre: targetAgrupador,
+            userId
+          });
+          agrupadorId = newAgrRef.id;
+        }
+      }
+    }
+
+    // 4. Insertar en Firestore.
     const docRef = await db.collection("movimientos").add({
       userId,
       nombre,
       monto: montoNum,
       tipo,
       fecha: Timestamp.now(),
+      agrupadorId: agrupadorId ?? null,
       source: "webhook"
     });
 
-    // 4. Registrar el último uso de la API Key (sin bloquear la respuesta si falla).
+    // 5. Registrar el último uso de la API Key (sin bloquear la respuesta si falla).
     lookupRef.update({ lastUsedAt: FieldValue.serverTimestamp() }).catch((err) =>
       console.error("No se pudo actualizar lastUsedAt de la API Key:", err)
     );
 
     return NextResponse.json({
       success: true,
-      id: docRef.id
+      id: docRef.id,
+      agrupadorId: agrupadorId ?? null
     });
 
   } catch (error) {

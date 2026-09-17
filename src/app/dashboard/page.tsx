@@ -627,6 +627,22 @@ export default function DashboardPage() {
                 </div>
               )}
 
+              <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 space-y-2 text-xs">
+                <p className="font-bold text-slate-700">Ejemplo de Payload JSON (POST):</p>
+                <pre className="bg-slate-900 text-slate-100 p-3 rounded-xl text-[11px] font-mono overflow-x-auto leading-relaxed">
+{`{
+  "nombre": "Uber al trabajo",
+  "monto": 145.50,
+  "tipo": "egreso",
+  "agrupador": "Transporte"
+}`}
+                </pre>
+                <p className="text-[10px] text-slate-500 font-medium">
+                  Header: <code className="font-bold">x-api-key: TU_API_KEY</code> | Endpoint: <code className="font-bold">POST /api/webhook</code><br />
+                  <span className="text-slate-400 font-normal">* El campo <code className="font-bold">agrupador</code> es opcional. Puedes enviar el nombre o el ID del agrupador. Se creará automáticamente si no existe.</span>
+                </p>
+              </div>
+
               <div className="flex gap-2">
                 <button
                   type="button"
