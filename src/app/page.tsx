@@ -439,6 +439,32 @@ export default function Home() {
   const totalEgresos = movimientos.filter(m => m.tipo === "egreso").reduce((acc, m) => acc + m.monto, 0);
   const balance = totalIngresos - totalEgresos;
 
+  // Cálculos para la selección múltiple
+  const selectedMovimientos = useMemo(() => {
+    return movimientos.filter(m => selectedIds.has(m.id));
+  }, [movimientos, selectedIds]);
+
+  const selectedTotal = useMemo(() => {
+    return selectedMovimientos.reduce((acc, m) => acc + m.monto, 0);
+  }, [selectedMovimientos]);
+
+  const selectedEgresos = useMemo(() => {
+    return selectedMovimientos
+      .filter(m => m.tipo === "egreso")
+      .reduce((acc, m) => acc + m.monto, 0);
+  }, [selectedMovimientos]);
+
+  const selectedIngresos = useMemo(() => {
+    return selectedMovimientos
+      .filter(m => m.tipo === "ingreso")
+      .reduce((acc, m) => acc + m.monto, 0);
+  }, [selectedMovimientos]);
+
+  // Si los movimientos seleccionados salieran de esta quincena (al moverlos o eliminarlos)
+  const balanceProyectado = balance - selectedIngresos + selectedEgresos;
+  const deficitActual = balance < 0 ? Math.abs(balance) : 0;
+  const restanteExcedente = deficitActual > 0 ? deficitActual - selectedEgresos : 0;
+
   const segmentCalculations = useMemo(() => {
     if (!config || !config.segmentsEnabled) return [];
 
@@ -919,19 +945,30 @@ export default function Home() {
 
               {/* Sub-bar para Selección Múltiple */}
               {isSelectingMode && (
-                <div className="flex items-center justify-between bg-purple-50/80 border border-purple-100 p-3 rounded-2xl">
-                  <button
-                    onClick={toggleSelectAll}
-                    className="text-xs font-black text-nu-purple flex items-center gap-2 active:scale-95 transition-transform"
-                  >
-                    <div className={`w-4.5 h-4.5 rounded border flex items-center justify-center transition-all ${selectedIds.size === filteredMovimientos.length && filteredMovimientos.length > 0 ? "bg-nu-purple border-nu-purple text-white" : "border-slate-300 bg-white"}`}>
-                      {selectedIds.size === filteredMovimientos.length && filteredMovimientos.length > 0 && <Check className="w-3 h-3 stroke-[3]" />}
+                <div className="bg-purple-50/80 border border-purple-100 p-3.5 rounded-2xl space-y-2">
+                  <div className="flex items-center justify-between">
+                    <button
+                      onClick={toggleSelectAll}
+                      className="text-xs font-black text-nu-purple flex items-center gap-2 active:scale-95 transition-transform"
+                    >
+                      <div className={`w-4.5 h-4.5 rounded border flex items-center justify-center transition-all ${selectedIds.size === filteredMovimientos.length && filteredMovimientos.length > 0 ? "bg-nu-purple border-nu-purple text-white" : "border-slate-300 bg-white"}`}>
+                        {selectedIds.size === filteredMovimientos.length && filteredMovimientos.length > 0 && <Check className="w-3 h-3 stroke-[3]" />}
+                      </div>
+                      {selectedIds.size === filteredMovimientos.length && filteredMovimientos.length > 0 ? "Desmarcar todos" : "Seleccionar todos"}
+                    </button>
+                    <span className="text-xs font-bold text-slate-500">
+                      {selectedIds.size} de {filteredMovimientos.length} seleccionados
+                    </span>
+                  </div>
+
+                  {selectedIds.size > 0 && (
+                    <div className="pt-2 border-t border-purple-100/90 flex items-center justify-between text-xs">
+                      <span className="font-bold text-slate-600">Suma seleccionada:</span>
+                      <span className="font-black text-nu-purple text-sm">
+                        ${selectedTotal.toLocaleString('es-ES', { minimumFractionDigits: 2 })}
+                      </span>
                     </div>
-                    {selectedIds.size === filteredMovimientos.length && filteredMovimientos.length > 0 ? "Desmarcar todos" : "Seleccionar todos"}
-                  </button>
-                  <span className="text-xs font-bold text-slate-500">
-                    {selectedIds.size} de {filteredMovimientos.length} seleccionados
-                  </span>
+                  )}
                 </div>
               )}
 
@@ -1080,36 +1117,84 @@ export default function Home() {
 
         {/* Floating Action Bar para Selección Múltiple */}
         {isSelectingMode && selectedIds.size > 0 && (
-          <div className="fixed bottom-20 left-1/2 -translate-x-1/2 w-[calc(100%-3rem)] max-w-[450px] z-[95] bg-slate-900 text-white p-4 rounded-3xl shadow-2xl flex items-center justify-between gap-2 animate-in fade-in slide-in-from-bottom-5">
-            <div className="flex items-center gap-2 pl-2">
-              <span className="bg-nu-purple text-white text-xs font-black px-2.5 py-1 rounded-full">
-                {selectedIds.size}
-              </span>
-              <span className="text-xs font-bold text-slate-300 hidden sm:inline">seleccionados</span>
+          <div className="fixed bottom-20 left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] max-w-[460px] z-[95] bg-slate-900/95 backdrop-blur-md text-white p-4 rounded-3xl shadow-2xl border border-slate-800 animate-in fade-in slide-in-from-bottom-5">
+            {/* Encabezado: Monto seleccionado y proyección en el presupuesto */}
+            <div className="flex items-start justify-between gap-3 mb-3 pb-3 border-b border-slate-800/80">
+              <div>
+                <div className="flex items-center gap-1.5 mb-1">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Seleccionado</span>
+                  <span className="bg-nu-purple text-white text-[10px] font-black px-1.5 py-0.2 rounded-full">
+                    {selectedIds.size}
+                  </span>
+                </div>
+                <div className="text-xl font-black text-white leading-none">
+                  ${selectedTotal.toLocaleString('es-ES', { minimumFractionDigits: 2 })}
+                </div>
+                {selectedEgresos > 0 && selectedIngresos > 0 && (
+                  <p className="text-[10px] text-slate-400 mt-1 font-medium">
+                    Egresos: -${selectedEgresos.toLocaleString('es-ES', { minimumFractionDigits: 2 })} · Ingresos: +${selectedIngresos.toLocaleString('es-ES', { minimumFractionDigits: 2 })}
+                  </p>
+                )}
+              </div>
+
+              {/* Indicador de presupuesto / balance de la quincena */}
+              <div className="text-right">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-1">
+                  {deficitActual > 0 ? "Excedente Quincenal" : "Balance Proyectado"}
+                </span>
+
+                {deficitActual > 0 ? (
+                  <div>
+                    {restanteExcedente > 0 ? (
+                      <span className="inline-block text-[11px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded-lg">
+                        Falta: ${restanteExcedente.toLocaleString('es-ES', { minimumFractionDigits: 2 })}
+                      </span>
+                    ) : (
+                      <span className="inline-block text-[11px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-lg">
+                        ✓ Excedente cubierto
+                      </span>
+                    )}
+                    <div className="text-[10px] text-slate-400 mt-1 font-medium">
+                      ${balance.toLocaleString('es-ES', { minimumFractionDigits: 0 })} → <span className={balanceProyectado >= 0 ? "text-emerald-400 font-bold" : "text-amber-400 font-bold"}>${balanceProyectado.toLocaleString('es-ES', { minimumFractionDigits: 0 })}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <span className={`text-base font-black ${balanceProyectado >= 0 ? "text-emerald-400" : "text-amber-400"}`}>
+                      ${balanceProyectado.toLocaleString('es-ES', { minimumFractionDigits: 2 })}
+                    </span>
+                    <span className="text-[10px] text-slate-400 block font-medium">
+                      (actual: ${balance.toLocaleString('es-ES', { minimumFractionDigits: 0 })})
+                    </span>
+                  </div>
+                )}
+              </div>
             </div>
-            
+
+            {/* Fila de botones */}
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setIsMoveDrawerOpen(true)}
                 disabled={isProcessingBulk}
-                className="bg-slate-800 hover:bg-slate-700 text-white px-3.5 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95 border border-slate-700"
+                className="flex-1 bg-nu-purple hover:bg-nu-purple/90 text-white py-2.5 px-3 rounded-2xl text-xs font-bold flex items-center justify-center gap-2 transition-all active:scale-95 shadow-md shadow-nu-purple/30"
               >
-                <CalendarDays className="w-4 h-4 text-nu-purple" />
-                Mover
+                <CalendarDays className="w-4 h-4" />
+                Mover de quincena
               </button>
 
               <button
                 onClick={handleBulkDelete}
                 disabled={isProcessingBulk}
-                className="bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30 px-3.5 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95"
+                className="bg-red-500/15 hover:bg-red-500/25 text-red-400 border border-red-500/20 px-3 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95"
+                title="Eliminar seleccionados"
               >
                 {isProcessingBulk ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
-                Eliminar
+                <span className="hidden sm:inline">Eliminar</span>
               </button>
 
               <button
                 onClick={() => setSelectedIds(new Set())}
-                className="p-2 text-slate-400 hover:text-white transition-colors"
+                className="p-2.5 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-2xl transition-colors active:scale-95"
                 title="Limpiar selección"
               >
                 <X className="w-4 h-4" />
@@ -1125,10 +1210,25 @@ export default function Home() {
           title="Mover Movimientos de Quincena"
         >
           <div className="space-y-6">
-            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
-              <p className="text-xs text-slate-500 font-medium">
-                Seleccionaste <strong className="text-slate-800 font-bold">{selectedIds.size} movimiento(s)</strong>. Elige a qué quincena deseas moverlos:
-              </p>
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-slate-500 font-medium">Movimientos seleccionados:</span>
+                <span className="text-xs font-black text-slate-800">{selectedIds.size}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-slate-500 font-medium">Suma total a mover:</span>
+                <span className="text-base font-black text-nu-purple">
+                  ${selectedTotal.toLocaleString('es-ES', { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+              {selectedEgresos > 0 && (
+                <div className="pt-2 border-t border-slate-200/60 flex items-center justify-between text-[11px]">
+                  <span className="text-slate-500 font-medium">Balance resultante de esta quincena:</span>
+                  <span className={`font-black ${balanceProyectado >= 0 ? "text-emerald-600" : "text-amber-600"}`}>
+                    ${balanceProyectado.toLocaleString('es-ES', { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+              )}
             </div>
 
             <div className="space-y-3">
