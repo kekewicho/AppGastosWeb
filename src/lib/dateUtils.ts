@@ -1,4 +1,4 @@
-import { addMonths, endOfMonth, isSaturday, isSunday, subDays, startOfMonth, addDays, format } from "date-fns";
+import { addMonths, endOfMonth, isSaturday, isSunday, subDays, startOfMonth, addDays, format, startOfDay, endOfDay } from "date-fns";
 import { es } from "date-fns/locale";
 
 export interface QuincenaRange {
@@ -16,23 +16,24 @@ export function getAdjustedDate(date: Date): Date {
 }
 
 export function getQuincenaRange(referenceDate: Date): QuincenaRange {
-  const monthStart = startOfMonth(referenceDate);
-  const monthEnd = endOfMonth(referenceDate);
+  const monthStart = startOfDay(startOfMonth(referenceDate));
+  const monthEnd = endOfDay(endOfMonth(referenceDate));
   
   const midMonth = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), 15);
   const adjustedMid = getAdjustedDate(midMonth);
-  const adjustedEnd = getAdjustedDate(monthEnd);
+  const adjustedMidEnd = endOfDay(adjustedMid);
+  const secondHalfStart = startOfDay(addDays(adjustedMid, 1));
 
-  if (referenceDate <= adjustedMid) {
+  if (referenceDate <= adjustedMidEnd) {
     return {
       start: monthStart,
-      end: adjustedMid,
+      end: adjustedMidEnd,
       label: `1ª Quincena ${format(referenceDate, 'MMMM yyyy', { locale: es })}`
     };
   } else {
     return {
-      start: addDays(adjustedMid, 1),
-      end: adjustedEnd,
+      start: secondHalfStart,
+      end: monthEnd,
       label: `2ª Quincena ${format(referenceDate, 'MMMM yyyy', { locale: es })}`
     };
   }
