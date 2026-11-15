@@ -68,6 +68,7 @@ interface Movimiento {
   agrupadorId?: string;
   segmentoId?: string;
   prestamoId?: string;
+  planId?: string;
 }
 
 interface Agrupador {
@@ -95,6 +96,8 @@ export default function Home() {
   const [nuevoMovimiento, setNuevoMovimiento] = useState<NuevoMovimiento>({ nombre: "", monto: "", tipo: "egreso" as const, agrupadorId: "", segmentoId: "", prestamoId: "" });
   const [isAdding, setIsAdding] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [movimientoAEliminar, setMovimientoAEliminar] = useState<Movimiento | null>(null);
+  const [isDeletingMovimiento, setIsDeletingMovimiento] = useState(false);
   const [isParcialidadesOpen, setIsParcialidadesOpen] = useState(false);
   const [isReportOpen, setIsReportOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -277,28 +280,24 @@ export default function Home() {
     setLastClassifiedName(mov.nombre);
   };
 
-  const handleDeleteMovimiento = async (mov: Movimiento) => {
-    const planId = (mov as any).planId;
-    
-    if (planId) {
-      if (confirm("Este gasto es parte de un plan de parcialidades. ¿Quieres eliminar TODO el plan o solo este movimiento?\n\nAceptar: Eliminar TODO el plan\nCancelar: Eliminar solo este pago")) {
-        try {
-          const { getDocs, query: fsQuery, collection: fsColl, where: fsWhere, writeBatch: fsBatch, doc: fsDoc } = await import("firebase/firestore");
-          const snap = await getDocs(fsQuery(fsColl(db, "movimientos"), fsWhere("planId", "==", planId)));
-          const batch = fsBatch(db);
-          snap.docs.forEach(d => batch.delete(fsDoc(db, "movimientos", d.id)));
-          await batch.commit();
-          return;
-        } catch (err) {
-          console.error(err);
-        }
-      }
-    }
-
+  const handleDeleteMovimiento = async (mov: Movimiento, deleteEntirePlan = false) => {
+    setIsDeletingMovimiento(true);
     try {
-      await deleteDoc(doc(db, "movimientos", mov.id));
+      if (deleteEntirePlan && mov.planId) {
+        const { getDocs, query: fsQuery, collection: fsColl, where: fsWhere, writeBatch: fsBatch, doc: fsDoc } = await import("firebase/firestore");
+        const snap = await getDocs(fsQuery(fsColl(db, "movimientos"), fsWhere("planId", "==", mov.planId)));
+        const batch = fsBatch(db);
+        snap.docs.forEach(d => batch.delete(fsDoc(db, "movimientos", d.id)));
+        await batch.commit();
+      } else {
+        await deleteDoc(doc(db, "movimientos", mov.id));
+      }
+      setMovimientoAEliminar(null);
     } catch (error) {
       console.error("Error al eliminar movimiento", error);
+      alert("Hubo un error al eliminar el movimiento.");
+    } finally {
+      setIsDeletingMovimiento(false);
     }
   };
 
@@ -1068,7 +1067,7 @@ export default function Home() {
                           <p className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">
                             {m.fecha?.toDate().toLocaleDateString('es-ES', { day: '2-digit', month: 'short' })}
                           </p>
-                          {(m as any).planId && (
+                          {m.planId && (
                             <span className="text-[9px] bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded-md font-black uppercase">Plan</span>
                           )}
                           {m.agrupadorId && (
@@ -1094,9 +1093,10 @@ export default function Home() {
                       <button 
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleDeleteMovimiento(m);
+                          setMovimientoAEliminar(m);
                         }}
                         className="p-2 text-slate-200 hover:text-red-500 transition-all"
+                        aria-label={`Eliminar ${m.nombre}`}
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -1297,6 +1297,67 @@ export default function Home() {
             </button>
           </div>
         </BottomDrawer>
+
+        {movimientoAEliminar && (
+          <div
+            className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-900/50 px-6 backdrop-blur-sm"
+            onClick={() => !isDeletingMovimiento && setMovimientoAEliminar(null)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && !isDeletingMovimiento) setMovimientoAEliminar(null);
+            }}
+          >
+            <section
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="delete-movement-title"
+              aria-describedby="delete-movement-description"
+              onClick={(event) => event.stopPropagation()}
+              className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl"
+            >
+              <h2 id="delete-movement-title" className="text-lg font-black text-slate-900">
+                ¿Eliminar este movimiento?
+              </h2>
+              <p id="delete-movement-description" className="mt-2 text-sm text-slate-500">
+                {movimientoAEliminar.nombre} · {movimientoAEliminar.tipo === "egreso" ? "Gasto" : "Ingreso"} de{" "}
+                ${movimientoAEliminar.monto.toLocaleString("es-ES", { minimumFractionDigits: 2 })}
+              </p>
+              {movimientoAEliminar.planId && (
+                <p className="mt-3 rounded-xl bg-amber-50 p-3 text-xs font-medium text-amber-800">
+                  Este movimiento pertenece a un plan de parcialidades. Elige si quieres eliminar solo este pago o todo el plan.
+                </p>
+              )}
+              <div className="mt-6 flex flex-col gap-2">
+                <button
+                  type="button"
+                  autoFocus
+                  disabled={isDeletingMovimiento}
+                  onClick={() => setMovimientoAEliminar(null)}
+                  className="w-full rounded-2xl bg-slate-100 py-3 font-bold text-slate-600 transition-colors hover:bg-slate-200 disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  disabled={isDeletingMovimiento}
+                  onClick={() => handleDeleteMovimiento(movimientoAEliminar)}
+                  className="w-full rounded-2xl border border-red-100 bg-red-50 py-3 font-bold text-red-600 transition-colors hover:bg-red-100 disabled:opacity-50"
+                >
+                  {isDeletingMovimiento ? "Eliminando..." : movimientoAEliminar.planId ? "Eliminar solo este pago" : "Eliminar movimiento"}
+                </button>
+                {movimientoAEliminar.planId && (
+                  <button
+                    type="button"
+                    disabled={isDeletingMovimiento}
+                    onClick={() => handleDeleteMovimiento(movimientoAEliminar, true)}
+                    className="w-full rounded-2xl bg-red-600 py-3 font-bold text-white transition-colors hover:bg-red-700 disabled:opacity-50"
+                  >
+                    {isDeletingMovimiento ? "Eliminando..." : "Eliminar todo el plan"}
+                  </button>
+                )}
+              </div>
+            </section>
+          </div>
+        )}
 
         <Navbar />
       </div>
